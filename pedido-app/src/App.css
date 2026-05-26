@@ -110,10 +110,20 @@
   gap: 18px;
 }
 
+.home-summary {
+  display: flex;
+  align-items: stretch;
+}
+
 .hero-copy {
   display: flex;
   flex-direction: column;
   gap: 14px;
+}
+
+.title-small {
+  font-size: clamp(1.5rem, 2vw, 2rem);
+  line-height: 1.1;
 }
 
 .supplier-highlight {
@@ -147,6 +157,26 @@
 .lead {
   color: rgba(36, 48, 59, 0.78);
   max-width: 30rem;
+}
+
+.summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.metric-card,
+.latest-order {
+  background: #fff7ee;
+  border: 1px solid rgba(90, 71, 47, 0.1);
+  border-radius: 20px;
+  padding: 16px;
+}
+
+.metric-card strong {
+  display: block;
+  font-size: 1.9rem;
+  margin-top: 6px;
 }
 
 .supplier-list,
@@ -345,6 +375,14 @@ select {
   font-weight: 700;
 }
 
+.latest-order-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
 .info-box {
   background: #fff7ee;
   border: 1px solid rgba(215, 91, 43, 0.14);
@@ -407,7 +445,8 @@ select {
   }
 
   .form-grid,
-  .catalog-grid {
+  .catalog-grid,
+  .summary-metrics {
     grid-template-columns: 1fr;
   }
 

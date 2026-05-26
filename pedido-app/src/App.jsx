@@ -301,6 +301,7 @@ function App() {
   )
 
   const lastCreatedOrder = appState.orders.find((order) => order.id === lastCreatedOrderId) ?? null
+  const latestOrder = appState.orders[0] ?? null
   const messageTargetSupplier = lastCreatedOrder
     ? getSupplierById(appState, lastCreatedOrder.supplierId)
     : selectedSupplier
@@ -608,11 +609,11 @@ function App() {
   }
 
   if (loading) {
-    return <div className="state-screen">Cargando datos reales del sistema...</div>
+    return <div className="state-screen">Cargando datos del sistema...</div>
   }
 
   if (error && !appState.users.length && !appState.suppliers.length) {
-    return <div className="state-screen">No se pudo cargar la API: {error}</div>
+    return <div className="state-screen">No se pudo cargar la aplicacion: {error}</div>
   }
 
   return (
@@ -620,11 +621,7 @@ function App() {
       <aside className="sidebar">
         <div>
           <p className="eyebrow">Osake Order Studio</p>
-          <h1>Pedidos, catalogos y vendedores en una sola vista.</h1>
-          <p className="lead">
-            Ahora corriendo con API y base de datos real para usuarios, catalogo,
-            historial y administracion editable.
-          </p>
+          <h1 className="title-small">Sistema de inventario</h1>
         </div>
 
         <div className="panel compact">
@@ -632,7 +629,7 @@ function App() {
           <select value={activeUserId} onChange={(event) => setActiveUserId(event.target.value)}>
             {appState.users.map((user) => (
               <option key={user.id} value={user.id}>
-                {user.name} · {user.role === 'admin' ? 'Admin' : 'Compras'}
+                {`${user.name} - ${user.role === 'admin' ? 'Admin' : 'Compras'}`}
               </option>
             ))}
           </select>
@@ -658,9 +655,7 @@ function App() {
               }}
             >
               <span>{supplier.name}</span>
-              <small>
-                {supplier.sellerName} · {supplier.deliveryLeadTime || 'Sin lead time'}
-              </small>
+              <small>{`${supplier.sellerName} - ${supplier.deliveryLeadTime || 'Sin lead time'}`}</small>
             </button>
           ))}
         </div>
@@ -689,46 +684,49 @@ function App() {
 
         {activeTab === 'overview' && (
           <section className="grid two-up">
-            <article className="panel hero-panel">
+            <article className="panel home-summary">
               <div className="hero-copy">
-                <h2>Estado actual del sistema</h2>
-                <ul className="clean-list">
-                  <li>Frontend React conectado a API Express.</li>
-                  <li>Base SQLite administrada por Prisma para crecer con migraciones.</li>
-                  <li>Usuarios, proveedores, productos, pedidos e historial persistidos en DB.</li>
-                </ul>
-              </div>
-              {selectedSupplier && (
-                <div className="supplier-highlight">
-                  <p className="label">Proveedor seleccionado</p>
-                  <h3>{selectedSupplier.name}</h3>
-                  <p>{selectedSupplier.sellerName}</p>
-                  <dl>
-                    <div>
-                      <dt>Entrega</dt>
-                      <dd>{selectedSupplier.deliveryLeadTime || 'Por definir'}</dd>
-                    </div>
-                    <div>
-                      <dt>Dias</dt>
-                      <dd>{selectedSupplier.deliveryDays || 'Sin calendario'}</dd>
-                    </div>
-                    <div>
-                      <dt>Catalogo</dt>
-                      <dd>{selectedSupplier.products.length} items</dd>
-                    </div>
-                  </dl>
+                <h2>Resumen del catalogo</h2>
+                <div className="summary-metrics">
+                  <div className="metric-card">
+                    <span className="label">Proveedores</span>
+                    <strong>{totalSuppliers}</strong>
+                  </div>
+                  <div className="metric-card">
+                    <span className="label">Productos</span>
+                    <strong>{totalProducts}</strong>
+                  </div>
+                  <div className="metric-card">
+                    <span className="label">Pedidos</span>
+                    <strong>{appState.orders.length}</strong>
+                  </div>
                 </div>
-              )}
+              </div>
             </article>
 
             <article className="panel">
-              <h2>Preparado para evolucionar</h2>
-              <ul className="clean-list">
-                <li>Panel admin para editar estructura y datos operativos.</li>
-                <li>Campos dinamicos para absorber nuevos requerimientos del negocio.</li>
-                <li>Repositorio remoto ya conectado para control de cambios continuo.</li>
-                <li>Siguiente salto natural: login real, permisos finos y despliegue cloud.</li>
-              </ul>
+              <h2>Ultimo pedido realizado</h2>
+              {latestOrder ? (
+                <div className="latest-order">
+                  <div className="latest-order-head">
+                    <strong>{getSupplierById(appState, latestOrder.supplierId)?.name || 'Proveedor'}</strong>
+                    <span className="pill">{latestOrder.status}</span>
+                  </div>
+                  <p className="muted">
+                    {`${getUserById(appState, latestOrder.createdById)?.name || 'Usuario'} - ${formatDate(latestOrder.createdAt)}`}
+                  </p>
+                  <ul className="clean-list">
+                    {latestOrder.items.slice(0, 4).map((item) => (
+                      <li key={`${latestOrder.id}-${item.productId}`}>
+                        {item.name} x {item.quantity}
+                      </li>
+                    ))}
+                  </ul>
+                  <strong>{currency(latestOrder.total)}</strong>
+                </div>
+              ) : (
+                <p className="muted">Todavia no hay pedidos registrados.</p>
+              )}
             </article>
           </section>
         )}
@@ -791,7 +789,9 @@ function App() {
               <div className="section-head">
                 <div>
                   <h2>Catalogo de {selectedSupplier?.name || 'proveedor'}</h2>
-                  <p className="muted">Maneja producto, variedad, tamano, formato, minimo y precio.</p>
+                  <p className="muted">
+                    Maneja producto, variedad, tamano, formato, minimo y precio.
+                  </p>
                 </div>
                 <button
                   type="button"
@@ -825,7 +825,7 @@ function App() {
                   <div key={product.id} className="product-card">
                     <div>
                       <strong>{product.name}</strong>
-                      <p>{[product.variety, product.size, product.format].filter(Boolean).join(' · ')}</p>
+                      <p>{[product.variety, product.size, product.format].filter(Boolean).join(' - ')}</p>
                       <small>{currency(product.unitPrice)}</small>
                     </div>
                     {isAdmin && (
@@ -853,14 +853,19 @@ function App() {
                   <h2>Selecciona productos</h2>
                   <p className="muted">Busca por nombre, variedad, tamano o formato.</p>
                 </div>
-                <input className="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar producto..." />
+                <input
+                  className="search"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar producto..."
+                />
               </div>
 
               <div className="catalog-grid">
                 {filteredProducts.map((product) => (
                   <button key={product.id} type="button" className="catalog-card" onClick={() => addLine(product)}>
                     <span>{product.name}</span>
-                    <small>{[product.variety, product.size].filter(Boolean).join(' · ')}</small>
+                    <small>{[product.variety, product.size].filter(Boolean).join(' - ')}</small>
                     <small>{product.format}</small>
                     <strong>{currency(product.unitPrice)}</strong>
                   </button>
@@ -882,10 +887,15 @@ function App() {
                   <div key={line.productId} className="line-item">
                     <div>
                       <strong>{line.name}</strong>
-                      <small>{[line.variety, line.size, line.format].filter(Boolean).join(' · ')}</small>
+                      <small>{[line.variety, line.size, line.format].filter(Boolean).join(' - ')}</small>
                     </div>
                     <div className="line-controls">
-                      <input type="number" min="0" value={line.quantity} onChange={(event) => updateLineQuantity(line.productId, event.target.value)} />
+                      <input
+                        type="number"
+                        min="0"
+                        value={line.quantity}
+                        onChange={(event) => updateLineQuantity(line.productId, event.target.value)}
+                      />
                       <span>{currency(line.unitPrice * line.quantity)}</span>
                       <button type="button" className="ghost danger" onClick={() => removeLine(line.productId)}>
                         Quitar
@@ -953,7 +963,7 @@ function App() {
                       <div className="history-head">
                         <div>
                           <strong>{supplier?.name}</strong>
-                          <small>{creator?.name} · {formatDate(order.createdAt)}</small>
+                          <small>{`${creator?.name || ''} - ${formatDate(order.createdAt)}`}</small>
                         </div>
                         <select value={order.status} onChange={(event) => changeOrderStatus(order.id, event.target.value)}>
                           <option value="Pendiente">Pendiente</option>
@@ -1058,8 +1068,7 @@ function App() {
                   <strong>`supplier`</strong> significa <strong>proveedor</strong>.
                 </p>
                 <p>
-                  <strong>`placeholder`</strong> es el texto de ayuda que aparece dentro del campo
-                  antes de escribir.
+                  <strong>`placeholder`</strong> es el texto de ayuda que aparece dentro del campo antes de escribir.
                 </p>
               </div>
               <div className="form-grid">
@@ -1107,7 +1116,7 @@ function App() {
                       <div key={field.id} className="list-row">
                         <div>
                           <strong>{field.label}</strong>
-                          <small>{field.id} · {field.type}</small>
+                          <small>{`${field.id} - ${field.type}`}</small>
                         </div>
                         <button type="button" className="ghost danger" onClick={() => removeDynamicField(entity, field.id)}>
                           Eliminar
@@ -1134,12 +1143,22 @@ function DynamicFieldGroup({ fields, values, onChange }) {
         field.type === 'textarea' ? (
           <label className="field field-wide" key={field.id}>
             <span>{field.label}</span>
-            <textarea rows="3" value={values[field.id] ?? ''} placeholder={field.placeholder} onChange={(event) => onChange(field.id, event.target.value)} />
+            <textarea
+              rows="3"
+              value={values[field.id] ?? ''}
+              placeholder={field.placeholder}
+              onChange={(event) => onChange(field.id, event.target.value)}
+            />
           </label>
         ) : (
           <label className="field" key={field.id}>
             <span>{field.label}</span>
-            <input type={field.type} value={values[field.id] ?? ''} placeholder={field.placeholder} onChange={(event) => onChange(field.id, event.target.value)} />
+            <input
+              type={field.type}
+              value={values[field.id] ?? ''}
+              placeholder={field.placeholder}
+              onChange={(event) => onChange(field.id, event.target.value)}
+            />
           </label>
         ),
       )}
