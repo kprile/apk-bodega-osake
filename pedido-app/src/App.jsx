@@ -10,7 +10,9 @@ import {
   deleteProduct,
   deleteSupplier,
   deleteUser,
+  exportBackup,
   getBootstrap,
+  importBackup,
   updateOrderStatus,
   updateProduct,
   updateSupplier,
@@ -194,6 +196,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [mutating, setMutating] = useState(false)
   const [error, setError] = useState('')
+  const [backupFeedback, setBackupFeedback] = useState('')
 
   async function refreshData(options = {}) {
     const { preserveSelection = true } = options
@@ -560,6 +563,42 @@ function App() {
     await runMutation(async () => {
       await deleteCustomField(entity, fieldId)
     })
+  }
+
+  async function downloadBackup() {
+    try {
+      setBackupFeedback('')
+      const payload = await exportBackup()
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `osake-backup-${new Date().toISOString().slice(0, 10)}.json`
+      link.click()
+      URL.revokeObjectURL(url)
+      setBackupFeedback('Respaldo exportado')
+    } catch (backupError) {
+      setError(backupError.message)
+    }
+  }
+
+  async function handleImportBackup(event) {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      setBackupFeedback('')
+      const payload = JSON.parse(await file.text())
+      await importBackup(payload)
+      await refreshData({ preserveSelection: false })
+      setBackupFeedback('Respaldo importado correctamente')
+    } catch (backupError) {
+      setError(backupError.message || 'No se pudo importar el respaldo')
+    } finally {
+      event.target.value = ''
+    }
   }
 
   async function changeOrderStatus(orderId, status) {
@@ -1014,9 +1053,18 @@ function App() {
                   <p className="muted">Agrega nuevos campos sin tocar el formulario completo.</p>
                 </div>
               </div>
+              <div className="info-box">
+                <p>
+                  <strong>`supplier`</strong> significa <strong>proveedor</strong>.
+                </p>
+                <p>
+                  <strong>`placeholder`</strong> es el texto de ayuda que aparece dentro del campo
+                  antes de escribir.
+                </p>
+              </div>
               <div className="form-grid">
                 <label className="field">
-                  <span>Entidad</span>
+                  <span>Se aplica a</span>
                   <select value={fieldForm.entity} onChange={(event) => setFieldForm((current) => ({ ...current, entity: event.target.value }))}>
                     <option value="supplier">Proveedor</option>
                     <option value="product">Producto</option>
@@ -1039,6 +1087,16 @@ function App() {
               <button type="button" className="primary" onClick={addDynamicField}>
                 Agregar campo
               </button>
+              <div className="backup-tools">
+                <button type="button" className="ghost" onClick={downloadBackup}>
+                  Exportar respaldo
+                </button>
+                <label className="ghost upload-button">
+                  Importar respaldo
+                  <input type="file" accept="application/json" onChange={handleImportBackup} />
+                </label>
+              </div>
+              {backupFeedback && <p className="feedback">{backupFeedback}</p>}
 
               <div className="stack">
                 {Object.entries(appState.customFields).map(([entity, fields]) => (

@@ -16,12 +16,13 @@
 .sidebar {
   padding: 32px;
   background:
-    radial-gradient(circle at top left, rgba(231, 110, 46, 0.22), transparent 34%),
-    linear-gradient(180deg, #0f1720 0%, #17212f 100%);
-  color: #f7f3ea;
+    radial-gradient(circle at top left, rgba(231, 110, 46, 0.16), transparent 34%),
+    linear-gradient(180deg, #fff8f1 0%, #f3ede4 100%);
+  color: #24303b;
   display: flex;
   flex-direction: column;
   gap: 24px;
+  border-right: 1px solid rgba(90, 71, 47, 0.1);
 }
 
 .workspace {
@@ -92,7 +93,7 @@
 }
 
 .panel {
-  background: rgba(255, 250, 244, 0.92);
+  background: rgba(255, 252, 247, 0.98);
   border: 1px solid rgba(90, 71, 47, 0.14);
   border-radius: 28px;
   padding: 24px;
@@ -116,10 +117,11 @@
 }
 
 .supplier-highlight {
-  background: #203445;
-  color: #fff7ed;
+  background: #fff1df;
+  color: #24303b;
   border-radius: 24px;
   padding: 18px;
+  border: 1px solid rgba(215, 91, 43, 0.18);
 }
 
 .supplier-highlight dl {
@@ -138,12 +140,12 @@
 }
 
 .eyebrow {
-  color: #f5b66d;
+  color: #c26123;
   margin: 0 0 12px;
 }
 
 .lead {
-  color: rgba(247, 243, 234, 0.82);
+  color: rgba(36, 48, 59, 0.78);
   max-width: 30rem;
 }
 
@@ -157,15 +159,16 @@
 }
 
 .supplier-card {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.8);
   color: inherit;
   border-radius: 20px;
   padding: 16px;
   text-align: left;
+  border: 1px solid rgba(90, 71, 47, 0.08);
 }
 
 .supplier-card.selected {
-  background: #f5b66d;
+  background: #ffd8ae;
   color: #17212f;
 }
 
@@ -190,15 +193,16 @@
 
 .pill {
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.84);
   color: inherit;
   padding: 7px 12px;
   font-size: 0.84rem;
   font-weight: 700;
+  border: 1px solid rgba(90, 71, 47, 0.08);
 }
 
 .pill.solid {
-  background: #24303b;
+  background: #d75b2b;
   color: #fffaf4;
 }
 
@@ -309,9 +313,10 @@ select {
 }
 
 .message-box {
-  background: #182331;
-  color: #fef7ee;
+  background: #fff7ee;
+  color: #24303b;
   border-radius: 24px;
+  border: 1px solid rgba(215, 91, 43, 0.18);
   padding: 18px;
   min-height: 320px;
   white-space: pre-wrap;
@@ -338,6 +343,44 @@ select {
 .feedback {
   color: #d75b2b;
   font-weight: 700;
+}
+
+.info-box {
+  background: #fff7ee;
+  border: 1px solid rgba(215, 91, 43, 0.14);
+  border-radius: 18px;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  color: #314252;
+}
+
+.info-box p {
+  margin: 0;
+}
+
+.info-box p + p {
+  margin-top: 8px;
+}
+
+.backup-tools {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.upload-button {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+}
+
+.upload-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
 }
 
 @media (max-width: 1180px) {

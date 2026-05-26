@@ -12,7 +12,9 @@ import {
   deleteProduct,
   deleteSupplier,
   deleteUser,
+  exportBackup,
   getBootstrap,
+  importBackup,
   resetAndSeedDatabase,
   updateOrderStatusById,
   updateProduct,
@@ -92,6 +94,13 @@ const customFieldSchema = z.object({
   placeholder: z.string().default(''),
 })
 
+const backupSchema = z.object({
+  users: z.array(z.any()).default([]),
+  suppliers: z.array(z.any()).default([]),
+  orders: z.array(z.any()).default([]),
+  customFields: z.record(z.string(), z.array(z.any())).default({}),
+})
+
 function parseOrThrow(schema, payload) {
   const result = schema.safeParse(payload)
   if (!result.success) {
@@ -110,6 +119,15 @@ app.get('/api/health', (_request, response) => {
 
 app.get('/api/bootstrap', (_request, response) => {
   response.json(getBootstrap())
+})
+
+app.get('/api/backup/export', (_request, response) => {
+  response.json(exportBackup())
+})
+
+app.post('/api/backup/import', (request, response) => {
+  const payload = parseOrThrow(backupSchema, request.body)
+  response.json(importBackup(payload))
 })
 
 app.post('/api/users', (request, response) => {

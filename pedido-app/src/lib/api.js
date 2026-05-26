@@ -76,3 +76,14 @@ export function createCustomField(payload) {
 export function deleteCustomField(entity, key) {
   return request(`/custom-fields/${entity}/${key}`, { method: 'DELETE' })
 }
+
+export function exportBackup() {
+  return request('/backup/export')
+}
+
+export function importBackup(payload) {
+  return request('/backup/import', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}

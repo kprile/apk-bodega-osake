@@ -293,6 +293,134 @@ export function getBootstrap() {
   }
 }
 
+export function exportBackup() {
+  return getBootstrap()
+}
+
+export function importBackup(backup) {
+  db.exec('BEGIN')
+  try {
+    db.exec(`
+      DELETE FROM orders;
+      DELETE FROM products;
+      DELETE FROM suppliers;
+      DELETE FROM users;
+      DELETE FROM custom_fields;
+    `)
+
+    const insertUser = db.prepare(`
+      INSERT INTO users (id, name, role, phone, email, extra_fields, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const insertSupplier = db.prepare(`
+      INSERT INTO suppliers (
+        id, name, seller_name, seller_phone, category, delivery_lead_time,
+        delivery_days, payment_terms, notes, extra_fields, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const insertProduct = db.prepare(`
+      INSERT INTO products (
+        id, supplier_id, name, variety, size, format, unit_price,
+        delivery_override, minimum_order, note, extra_fields, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const insertOrder = db.prepare(`
+      INSERT INTO orders (
+        id, supplier_id, created_by_id, status, notes, extra_fields,
+        items, total, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    const insertField = db.prepare(`
+      INSERT INTO custom_fields (id, entity, label, field_key, field_type, placeholder, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    for (const user of backup.users ?? []) {
+      insertUser.run(
+        user.id,
+        user.name,
+        user.role,
+        user.phone ?? '',
+        user.email ?? '',
+        stringify(user.extraFields),
+        user.createdAt ?? now(),
+        user.updatedAt ?? now(),
+      )
+    }
+
+    for (const supplier of backup.suppliers ?? []) {
+      insertSupplier.run(
+        supplier.id,
+        supplier.name,
+        supplier.sellerName ?? '',
+        supplier.sellerPhone ?? '',
+        supplier.category ?? '',
+        supplier.deliveryLeadTime ?? '',
+        supplier.deliveryDays ?? '',
+        supplier.paymentTerms ?? '',
+        supplier.notes ?? '',
+        stringify(supplier.extraFields),
+        supplier.createdAt ?? now(),
+        supplier.updatedAt ?? now(),
+      )
+
+      for (const product of supplier.products ?? []) {
+        insertProduct.run(
+          product.id,
+          supplier.id,
+          product.name,
+          product.variety ?? '',
+          product.size ?? '',
+          product.format ?? '',
+          product.unitPrice ?? 0,
+          product.deliveryOverride ?? '',
+          product.minimumOrder ?? 0,
+          product.note ?? '',
+          stringify(product.extraFields),
+          product.createdAt ?? now(),
+          product.updatedAt ?? now(),
+        )
+      }
+    }
+
+    for (const order of backup.orders ?? []) {
+      insertOrder.run(
+        order.id,
+        order.supplierId,
+        order.createdById,
+        order.status ?? 'Pendiente',
+        order.notes ?? '',
+        stringify(order.extraFields),
+        stringifyItems(order.items),
+        order.total ?? 0,
+        order.createdAt ?? now(),
+        order.updatedAt ?? now(),
+      )
+    }
+
+    for (const [entity, fields] of Object.entries(backup.customFields ?? {})) {
+      for (const field of fields ?? []) {
+        insertField.run(
+          crypto.randomUUID(),
+          entity,
+          field.label,
+          field.id,
+          field.type,
+          field.placeholder ?? '',
+          now(),
+        )
+      }
+    }
+
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+
+  return getBootstrap()
+}
+
 function now() {
   return new Date().toISOString()
 }
