@@ -1,0 +1,475 @@
+import crypto from 'node:crypto'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { DatabaseSync } from 'node:sqlite'
+import { seedData } from './seed-data.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const dataDir = path.resolve(__dirname, '../data')
+const dbPath = path.join(dataDir, 'osake.sqlite')
+
+fs.mkdirSync(dataDir, { recursive: true })
+
+const db = new DatabaseSync(dbPath)
+db.exec('PRAGMA foreign_keys = ON')
+
+function stringify(value) {
+  return JSON.stringify(value ?? {})
+}
+
+function stringifyItems(value) {
+  return JSON.stringify(value ?? [])
+}
+
+function parseRecord(value) {
+  try {
+    return value ? JSON.parse(value) : {}
+  } catch {
+    return {}
+  }
+}
+
+function parseItems(value) {
+  try {
+    return value ? JSON.parse(value) : []
+  } catch {
+    return []
+  }
+}
+
+function initSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      role TEXT NOT NULL,
+      phone TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL DEFAULT '',
+      extra_fields TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS suppliers (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      seller_name TEXT NOT NULL DEFAULT '',
+      seller_phone TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT '',
+      delivery_lead_time TEXT NOT NULL DEFAULT '',
+      delivery_days TEXT NOT NULL DEFAULT '',
+      payment_terms TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      extra_fields TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS products (
+      id TEXT PRIMARY KEY,
+      supplier_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      variety TEXT NOT NULL DEFAULT '',
+      size TEXT NOT NULL DEFAULT '',
+      format TEXT NOT NULL DEFAULT '',
+      unit_price INTEGER NOT NULL DEFAULT 0,
+      delivery_override TEXT NOT NULL DEFAULT '',
+      minimum_order INTEGER NOT NULL DEFAULT 0,
+      note TEXT NOT NULL DEFAULT '',
+      extra_fields TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE
+    );
+
+    CREATE TABLE IF NOT EXISTS orders (
+      id TEXT PRIMARY KEY,
+      supplier_id TEXT NOT NULL,
+      created_by_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'Pendiente',
+      notes TEXT NOT NULL DEFAULT '',
+      extra_fields TEXT NOT NULL DEFAULT '{}',
+      items TEXT NOT NULL DEFAULT '[]',
+      total INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (supplier_id) REFERENCES suppliers(id) ON DELETE CASCADE,
+      FOREIGN KEY (created_by_id) REFERENCES users(id) ON DELETE RESTRICT
+    );
+
+    CREATE TABLE IF NOT EXISTS custom_fields (
+      id TEXT PRIMARY KEY,
+      entity TEXT NOT NULL,
+      label TEXT NOT NULL,
+      field_key TEXT NOT NULL,
+      field_type TEXT NOT NULL,
+      placeholder TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `)
+}
+
+export function resetAndSeedDatabase() {
+  initSchema()
+  const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
+  if (count > 0) return
+  seedDatabase()
+}
+
+export function seedDatabase() {
+  const insertUser = db.prepare(`
+    INSERT INTO users (id, name, role, phone, email, extra_fields)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `)
+  const insertSupplier = db.prepare(`
+    INSERT INTO suppliers (
+      id, name, seller_name, seller_phone, category, delivery_lead_time,
+      delivery_days, payment_terms, notes, extra_fields
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertProduct = db.prepare(`
+    INSERT INTO products (
+      id, supplier_id, name, variety, size, format, unit_price,
+      delivery_override, minimum_order, note, extra_fields
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+
+  db.exec('BEGIN')
+  try {
+    db.exec('DELETE FROM orders; DELETE FROM products; DELETE FROM suppliers; DELETE FROM users; DELETE FROM custom_fields;')
+
+    for (const user of seedData.users) {
+      insertUser.run(user.id, user.name, user.role, user.phone, user.email, stringify(user.extraFields))
+    }
+
+    for (const supplier of seedData.suppliers) {
+      insertSupplier.run(
+        supplier.id,
+        supplier.name,
+        supplier.sellerName,
+        supplier.sellerPhone,
+        supplier.category,
+        supplier.deliveryLeadTime,
+        supplier.deliveryDays,
+        supplier.paymentTerms,
+        supplier.notes,
+        stringify(supplier.extraFields),
+      )
+
+      for (const product of supplier.products) {
+        insertProduct.run(
+          product.id,
+          supplier.id,
+          product.name,
+          product.variety,
+          product.size,
+          product.format,
+          product.unitPrice,
+          product.deliveryOverride,
+          product.minimumOrder,
+          product.note,
+          stringify(product.extraFields),
+        )
+      }
+    }
+
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
+export function hardResetDatabase() {
+  db.exec(`
+    DELETE FROM orders;
+    DELETE FROM products;
+    DELETE FROM suppliers;
+    DELETE FROM users;
+    DELETE FROM custom_fields;
+  `)
+  seedDatabase()
+}
+
+function mapUser(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    role: row.role,
+    phone: row.phone,
+    email: row.email,
+    extraFields: parseRecord(row.extra_fields),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapSupplier(row, products = []) {
+  return {
+    id: row.id,
+    name: row.name,
+    sellerName: row.seller_name,
+    sellerPhone: row.seller_phone,
+    category: row.category,
+    deliveryLeadTime: row.delivery_lead_time,
+    deliveryDays: row.delivery_days,
+    paymentTerms: row.payment_terms,
+    notes: row.notes,
+    extraFields: parseRecord(row.extra_fields),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    products,
+  }
+}
+
+function mapProduct(row) {
+  return {
+    id: row.id,
+    supplierId: row.supplier_id,
+    name: row.name,
+    variety: row.variety,
+    size: row.size,
+    format: row.format,
+    unitPrice: row.unit_price,
+    deliveryOverride: row.delivery_override,
+    minimumOrder: row.minimum_order,
+    note: row.note,
+    extraFields: parseRecord(row.extra_fields),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapOrder(row) {
+  return {
+    id: row.id,
+    supplierId: row.supplier_id,
+    createdById: row.created_by_id,
+    status: row.status,
+    notes: row.notes,
+    extraFields: parseRecord(row.extra_fields),
+    items: parseItems(row.items),
+    total: row.total,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapCustomField(row) {
+  return {
+    id: row.field_key,
+    label: row.label,
+    type: row.field_type,
+    placeholder: row.placeholder,
+  }
+}
+
+export function getBootstrap() {
+  const users = db.prepare('SELECT * FROM users ORDER BY created_at ASC').all().map(mapUser)
+  const products = db.prepare('SELECT * FROM products ORDER BY name ASC').all().map(mapProduct)
+  const suppliers = db
+    .prepare('SELECT * FROM suppliers ORDER BY name ASC')
+    .all()
+    .map((supplier) =>
+      mapSupplier(
+        supplier,
+        products.filter((product) => product.supplierId === supplier.id),
+      ),
+    )
+  const orders = db.prepare('SELECT * FROM orders ORDER BY created_at DESC').all().map(mapOrder)
+  const fields = db.prepare('SELECT * FROM custom_fields ORDER BY created_at ASC').all()
+
+  return {
+    users,
+    suppliers,
+    orders,
+    customFields: {
+      supplier: fields.filter((field) => field.entity === 'supplier').map(mapCustomField),
+      product: fields.filter((field) => field.entity === 'product').map(mapCustomField),
+      order: fields.filter((field) => field.entity === 'order').map(mapCustomField),
+      user: fields.filter((field) => field.entity === 'user').map(mapCustomField),
+    },
+  }
+}
+
+function now() {
+  return new Date().toISOString()
+}
+
+export function createUser(user) {
+  db.prepare(`
+    INSERT INTO users (id, name, role, phone, email, extra_fields, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(user.id, user.name, user.role, user.phone, user.email, stringify(user.extraFields), now(), now())
+
+  return getBootstrap().users.find((item) => item.id === user.id)
+}
+
+export function updateUser(id, user) {
+  db.prepare(`
+    UPDATE users
+    SET name = ?, role = ?, phone = ?, email = ?, extra_fields = ?, updated_at = ?
+    WHERE id = ?
+  `).run(user.name, user.role, user.phone, user.email, stringify(user.extraFields), now(), id)
+
+  return getBootstrap().users.find((item) => item.id === id)
+}
+
+export function deleteUser(id) {
+  db.prepare('DELETE FROM users WHERE id = ?').run(id)
+}
+
+export function createSupplier(supplier) {
+  db.prepare(`
+    INSERT INTO suppliers (
+      id, name, seller_name, seller_phone, category, delivery_lead_time,
+      delivery_days, payment_terms, notes, extra_fields, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    supplier.id,
+    supplier.name,
+    supplier.sellerName,
+    supplier.sellerPhone,
+    supplier.category,
+    supplier.deliveryLeadTime,
+    supplier.deliveryDays,
+    supplier.paymentTerms,
+    supplier.notes,
+    stringify(supplier.extraFields),
+    now(),
+    now(),
+  )
+
+  return getBootstrap().suppliers.find((item) => item.id === supplier.id)
+}
+
+export function updateSupplier(id, supplier) {
+  db.prepare(`
+    UPDATE suppliers
+    SET name = ?, seller_name = ?, seller_phone = ?, category = ?, delivery_lead_time = ?,
+        delivery_days = ?, payment_terms = ?, notes = ?, extra_fields = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    supplier.name,
+    supplier.sellerName,
+    supplier.sellerPhone,
+    supplier.category,
+    supplier.deliveryLeadTime,
+    supplier.deliveryDays,
+    supplier.paymentTerms,
+    supplier.notes,
+    stringify(supplier.extraFields),
+    now(),
+    id,
+  )
+
+  return getBootstrap().suppliers.find((item) => item.id === id)
+}
+
+export function deleteSupplier(id) {
+  db.prepare('DELETE FROM suppliers WHERE id = ?').run(id)
+}
+
+export function createProduct(product) {
+  db.prepare(`
+    INSERT INTO products (
+      id, supplier_id, name, variety, size, format, unit_price,
+      delivery_override, minimum_order, note, extra_fields, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    product.id,
+    product.supplierId,
+    product.name,
+    product.variety,
+    product.size,
+    product.format,
+    product.unitPrice,
+    product.deliveryOverride,
+    product.minimumOrder,
+    product.note,
+    stringify(product.extraFields),
+    now(),
+    now(),
+  )
+
+  return getBootstrap().suppliers
+    .flatMap((supplier) => supplier.products)
+    .find((item) => item.id === product.id)
+}
+
+export function updateProduct(id, product) {
+  db.prepare(`
+    UPDATE products
+    SET supplier_id = ?, name = ?, variety = ?, size = ?, format = ?, unit_price = ?,
+        delivery_override = ?, minimum_order = ?, note = ?, extra_fields = ?, updated_at = ?
+    WHERE id = ?
+  `).run(
+    product.supplierId,
+    product.name,
+    product.variety,
+    product.size,
+    product.format,
+    product.unitPrice,
+    product.deliveryOverride,
+    product.minimumOrder,
+    product.note,
+    stringify(product.extraFields),
+    now(),
+    id,
+  )
+
+  return getBootstrap().suppliers
+    .flatMap((supplier) => supplier.products)
+    .find((item) => item.id === id)
+}
+
+export function deleteProduct(id) {
+  db.prepare('DELETE FROM products WHERE id = ?').run(id)
+}
+
+export function createOrder(order) {
+  db.prepare(`
+    INSERT INTO orders (
+      id, supplier_id, created_by_id, status, notes, extra_fields,
+      items, total, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    order.id,
+    order.supplierId,
+    order.createdById,
+    order.status,
+    order.notes,
+    stringify(order.extraFields),
+    stringifyItems(order.items),
+    order.total,
+    now(),
+    now(),
+  )
+
+  return getBootstrap().orders.find((item) => item.id === order.id)
+}
+
+export function updateOrderStatusById(id, status) {
+  db.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), id)
+  return getBootstrap().orders.find((item) => item.id === id)
+}
+
+export function createCustomField(field) {
+  const id = crypto.randomUUID()
+  db.prepare(`
+    INSERT INTO custom_fields (id, entity, label, field_key, field_type, placeholder, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, field.entity, field.label, field.key, field.fieldType, field.placeholder, now())
+
+  return {
+    id: field.key,
+    label: field.label,
+    type: field.fieldType,
+    placeholder: field.placeholder,
+  }
+}
+
+export function deleteCustomField(entity, key) {
+  db.prepare('DELETE FROM custom_fields WHERE entity = ? AND field_key = ?').run(entity, key)
+}

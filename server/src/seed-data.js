@@ -1,5 +1,4 @@
-export const seedState = {
-  activeUserId: 'user-admin',
+export const seedData = {
   users: [
     {
       id: 'user-admin',
@@ -33,7 +32,6 @@ export const seedState = {
       products: [
         {
           id: 'product-coke-zero-15',
-          supplierId: 'supplier-cocacola',
           name: 'Coca-Cola',
           variety: 'Zero',
           size: '1.5L',
@@ -46,7 +44,6 @@ export const seedState = {
         },
         {
           id: 'product-fanta-3',
-          supplierId: 'supplier-cocacola',
           name: 'Fanta',
           variety: 'Naranja',
           size: '3L',
@@ -59,7 +56,6 @@ export const seedState = {
         },
         {
           id: 'product-sprite-1',
-          supplierId: 'supplier-cocacola',
           name: 'Sprite',
           variety: 'Sin azucar',
           size: '1L',
@@ -86,7 +82,6 @@ export const seedState = {
       products: [
         {
           id: 'product-salmon-trim',
-          supplierId: 'supplier-salmones',
           name: 'Salmon fresco',
           variety: 'Trim E',
           size: '17 kg',
@@ -99,7 +94,6 @@ export const seedState = {
         },
         {
           id: 'product-salmon-porcion',
-          supplierId: 'supplier-salmones',
           name: 'Salmon porcionado',
           variety: 'Premium',
           size: '5 kg',
@@ -126,7 +120,6 @@ export const seedState = {
       products: [
         {
           id: 'product-hielo-cristal',
-          supplierId: 'supplier-hielo',
           name: 'Hielo',
           variety: 'Cristal',
           size: '10 kg',
@@ -140,7 +133,6 @@ export const seedState = {
       ],
     },
   ],
-  orders: [],
   customFields: {
     supplier: [],
     product: [],

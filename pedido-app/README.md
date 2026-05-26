@@ -18,6 +18,8 @@ npm install
 npm run dev
 ```
 
+Por defecto consume la API en `http://localhost:4000/api`.
+
 ## Build de produccion
 
 ```bash
@@ -26,11 +28,10 @@ npm run build
 
 ## Siguiente paso recomendado para produccion real
 
-Esta base ya tiene el modelo funcional del negocio, pero para una puesta en produccion completa conviene conectar:
+Esta base ya tiene el modelo funcional del negocio y ya consume un backend real. Para una puesta en produccion completa conviene agregar o reforzar:
 
 - autenticacion real
-- base de datos
-- API/backend
+- despliegue del backend
 - auditoria de cambios
 - permisos por usuario
 - backup y exportacion

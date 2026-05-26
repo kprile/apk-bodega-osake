@@ -4,6 +4,15 @@
   min-height: 100vh;
 }
 
+.state-screen {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  font-size: 1.1rem;
+  color: #24303b;
+}
+
 .sidebar {
   padding: 32px;
   background:
@@ -20,6 +29,15 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
+}
+
+.error-banner {
+  background: #fff1ea;
+  color: #9a351f;
+  border: 1px solid rgba(154, 53, 31, 0.18);
+  border-radius: 18px;
+  padding: 14px 16px;
+  font-weight: 700;
 }
 
 .topbar {

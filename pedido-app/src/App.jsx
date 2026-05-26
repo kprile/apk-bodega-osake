@@ -1,8 +1,23 @@
 import { startTransition, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import './App.css'
-import { seedState } from './data/seed'
+import {
+  createCustomField,
+  createOrder,
+  createProduct,
+  createSupplier,
+  createUser,
+  deleteCustomField,
+  deleteProduct,
+  deleteSupplier,
+  deleteUser,
+  getBootstrap,
+  updateOrderStatus,
+  updateProduct,
+  updateSupplier,
+  updateUser,
+} from './lib/api'
 
-const STORAGE_KEY = 'osake-order-studio-v1'
+const ACTIVE_USER_KEY = 'osake-active-user-id'
 
 const tabs = [
   { id: 'overview', label: 'Resumen' },
@@ -11,35 +26,6 @@ const tabs = [
   { id: 'history', label: 'Historial' },
   { id: 'admin', label: 'Admin' },
 ]
-
-function uid(prefix) {
-  return `${prefix}-${Math.random().toString(36).slice(2, 9)}`
-}
-
-function cloneSeed() {
-  return JSON.parse(JSON.stringify(seedState))
-}
-
-function loadState() {
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    return raw ? JSON.parse(raw) : cloneSeed()
-  } catch {
-    return cloneSeed()
-  }
-}
-
-function saveState(state) {
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
-}
-
-function getSupplierById(state, supplierId) {
-  return state.suppliers.find((supplier) => supplier.id === supplierId) ?? null
-}
-
-function getUserById(state, userId) {
-  return state.users.find((user) => user.id === userId) ?? null
-}
 
 function currency(value) {
   return new Intl.NumberFormat('es-CL', {
@@ -121,9 +107,9 @@ function createEmptyProduct(customFields, supplierId = '') {
   }
 }
 
-function createEmptyOrderDraft(customFields) {
+function createEmptyOrderDraft(customFields, supplierId = '') {
   return {
-    supplierId: '',
+    supplierId,
     notes: '',
     lines: [],
     extraFields: prepareEntity(customFields.order, {}),
@@ -156,23 +142,43 @@ function composeOrderText(order, supplier, user) {
   return [...header, '', 'Detalle pedido:', ...items, '', ...footer].join('\n')
 }
 
+function getSupplierById(state, supplierId) {
+  return state.suppliers.find((supplier) => supplier.id === supplierId) ?? null
+}
+
+function getUserById(state, userId) {
+  return state.users.find((user) => user.id === userId) ?? null
+}
+
+function initialDataState() {
+  return {
+    users: [],
+    suppliers: [],
+    orders: [],
+    customFields: {
+      supplier: [],
+      product: [],
+      order: [],
+      user: [],
+    },
+  }
+}
+
 function App() {
-  const [bootState] = useState(() => loadState())
-  const [appState, setAppState] = useState(bootState)
+  const [appState, setAppState] = useState(initialDataState)
   const [activeTab, setActiveTab] = useState('overview')
-  const [activeUserId, setActiveUserId] = useState(bootState.activeUserId)
-  const [selectedSupplierId, setSelectedSupplierId] = useState(bootState.suppliers[0]?.id ?? '')
+  const [activeUserId, setActiveUserId] = useState(() => localStorage.getItem(ACTIVE_USER_KEY) ?? '')
+  const [selectedSupplierId, setSelectedSupplierId] = useState('')
   const [supplierForm, setSupplierForm] = useState(() =>
-    createEmptySupplier(bootState.customFields),
+    createEmptySupplier(initialDataState().customFields),
   )
   const [productForm, setProductForm] = useState(() =>
-    createEmptyProduct(bootState.customFields, bootState.suppliers[0]?.id ?? ''),
+    createEmptyProduct(initialDataState().customFields, ''),
   )
-  const [userForm, setUserForm] = useState(() => createEmptyUser(bootState.customFields))
-  const [orderDraft, setOrderDraft] = useState(() => ({
-    ...createEmptyOrderDraft(bootState.customFields),
-    supplierId: bootState.suppliers[0]?.id ?? '',
-  }))
+  const [userForm, setUserForm] = useState(() => createEmptyUser(initialDataState().customFields))
+  const [orderDraft, setOrderDraft] = useState(() =>
+    createEmptyOrderDraft(initialDataState().customFields, ''),
+  )
   const [fieldForm, setFieldForm] = useState({
     entity: 'supplier',
     label: '',
@@ -185,15 +191,92 @@ function App() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [lastCreatedOrderId, setLastCreatedOrderId] = useState(null)
   const [copyFeedback, setCopyFeedback] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [mutating, setMutating] = useState(false)
+  const [error, setError] = useState('')
+
+  async function refreshData(options = {}) {
+    const { preserveSelection = true } = options
+    const data = await getBootstrap()
+    setAppState(data)
+
+    const fallbackUserId = localStorage.getItem(ACTIVE_USER_KEY) || data.users[0]?.id || ''
+    setActiveUserId((current) =>
+      data.users.some((user) => user.id === current) ? current : fallbackUserId,
+    )
+
+    if (!preserveSelection) {
+      const nextSupplierId = data.suppliers[0]?.id ?? ''
+      setSelectedSupplierId(nextSupplierId)
+      setOrderDraft(createEmptyOrderDraft(data.customFields, nextSupplierId))
+      setSupplierForm(createEmptySupplier(data.customFields))
+      setProductForm(createEmptyProduct(data.customFields, nextSupplierId))
+      setUserForm(createEmptyUser(data.customFields))
+      return data
+    }
+
+    setSelectedSupplierId((current) =>
+      data.suppliers.some((supplier) => supplier.id === current)
+        ? current
+        : (data.suppliers[0]?.id ?? ''),
+    )
+
+    setSupplierForm((current) => ({
+      ...current,
+      extraFields: normalizeDynamicValues(data.customFields.supplier, current.extraFields),
+    }))
+    setProductForm((current) => ({
+      ...current,
+      supplierId:
+        data.suppliers.some((supplier) => supplier.id === current.supplierId)
+          ? current.supplierId
+          : (data.suppliers[0]?.id ?? ''),
+      extraFields: normalizeDynamicValues(data.customFields.product, current.extraFields),
+    }))
+    setUserForm((current) => ({
+      ...current,
+      extraFields: normalizeDynamicValues(data.customFields.user, current.extraFields),
+    }))
+    setOrderDraft((current) => ({
+      ...current,
+      supplierId:
+        data.suppliers.some((supplier) => supplier.id === current.supplierId)
+          ? current.supplierId
+          : (data.suppliers[0]?.id ?? ''),
+      extraFields: normalizeDynamicValues(data.customFields.order, current.extraFields),
+    }))
+
+    return data
+  }
 
   useEffect(() => {
-    saveState({ ...appState, activeUserId })
-  }, [activeUserId, appState])
+    async function load() {
+      try {
+        setLoading(true)
+        setError('')
+        await refreshData({ preserveSelection: false })
+      } catch (loadError) {
+        setError(loadError.message)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    load()
+  }, [])
+
+  useEffect(() => {
+    if (activeUserId) {
+      localStorage.setItem(ACTIVE_USER_KEY, activeUserId)
+    }
+  }, [activeUserId])
 
   const activeUser = useMemo(() => getUserById(appState, activeUserId), [appState, activeUserId])
   const isAdmin = activeUser?.role === 'admin'
-  const selectedSupplier =
-    appState.suppliers.find((supplier) => supplier.id === selectedSupplierId) ?? null
+  const selectedSupplier = useMemo(
+    () => getSupplierById(appState, selectedSupplierId),
+    [appState, selectedSupplierId],
+  )
 
   const deferredSearch = useDeferredValue(search)
   const filteredProducts = useMemo(() => {
@@ -223,31 +306,29 @@ function App() {
       ? composeOrderText(lastCreatedOrder, messageTargetSupplier, activeUser)
       : ''
 
-  function updateState(updater) {
-    setAppState((current) => {
-      const next = typeof updater === 'function' ? updater(current) : updater
-      saveState({ ...next, activeUserId })
-      return next
-    })
-  }
+  const visibleOrders = appState.orders.filter((order) => {
+    const bySupplier = historyFilter === 'all' || order.supplierId === historyFilter
+    const byStatus = statusFilter === 'all' || order.status === statusFilter
+    return bySupplier && byStatus
+  })
 
-  function syncFormsWithCustomFields(nextState) {
-    setSupplierForm((current) => ({
-      ...current,
-      extraFields: normalizeDynamicValues(nextState.customFields.supplier, current.extraFields),
-    }))
-    setProductForm((current) => ({
-      ...current,
-      extraFields: normalizeDynamicValues(nextState.customFields.product, current.extraFields),
-    }))
-    setUserForm((current) => ({
-      ...current,
-      extraFields: normalizeDynamicValues(nextState.customFields.user, current.extraFields),
-    }))
-    setOrderDraft((current) => ({
-      ...current,
-      extraFields: normalizeDynamicValues(nextState.customFields.order, current.extraFields),
-    }))
+  const totalSuppliers = appState.suppliers.length
+  const totalProducts = appState.suppliers.reduce(
+    (count, supplier) => count + supplier.products.length,
+    0,
+  )
+
+  async function runMutation(action) {
+    try {
+      setMutating(true)
+      setError('')
+      await action()
+      await refreshData()
+    } catch (mutationError) {
+      setError(mutationError.message)
+    } finally {
+      setMutating(false)
+    }
   }
 
   function handleSupplierFormChange(event) {
@@ -275,30 +356,21 @@ function App() {
     }))
   }
 
-  function saveSupplier() {
+  async function saveSupplier() {
     if (!supplierForm.name.trim()) return
     const payload = {
       ...supplierForm,
-      id: supplierForm.id || uid('supplier'),
-      products:
-        supplierForm.id && selectedSupplier?.id === supplierForm.id
-          ? selectedSupplier.products
-          : [],
+      extraFields: normalizeDynamicValues(appState.customFields.supplier, supplierForm.extraFields),
     }
 
-    updateState((current) => {
-      const exists = current.suppliers.some((supplier) => supplier.id === payload.id)
-      const suppliers = exists
-        ? current.suppliers.map((supplier) =>
-            supplier.id === payload.id ? { ...supplier, ...payload, products: supplier.products } : supplier,
-          )
-        : [...current.suppliers, payload]
-
-      return { ...current, suppliers }
+    await runMutation(async () => {
+      if (supplierForm.id) {
+        await updateSupplier(supplierForm.id, payload)
+      } else {
+        await createSupplier(payload)
+      }
+      setSupplierForm(createEmptySupplier(appState.customFields))
     })
-
-    setSelectedSupplierId(payload.id)
-    setSupplierForm(createEmptySupplier(appState.customFields))
   }
 
   function editSupplier(supplier) {
@@ -309,45 +381,34 @@ function App() {
     setActiveTab('catalog')
   }
 
-  function deleteSupplier(supplierId) {
-    const fallbackSupplier =
-      appState.suppliers.find((supplier) => supplier.id !== supplierId)?.id ?? ''
-
-    updateState((current) => ({
-      ...current,
-      suppliers: current.suppliers.filter((supplier) => supplier.id !== supplierId),
-      orders: current.orders.filter((order) => order.supplierId !== supplierId),
-    }))
-    if (selectedSupplierId === supplierId) setSelectedSupplierId(fallbackSupplier)
-    setOrderDraft((current) => ({
-      ...current,
-      supplierId: current.supplierId === supplierId ? fallbackSupplier : current.supplierId,
-    }))
+  async function removeSupplier(supplierId) {
+    await runMutation(async () => {
+      await deleteSupplier(supplierId)
+      if (selectedSupplierId === supplierId) {
+        setSelectedSupplierId('')
+        setOrderDraft(createEmptyOrderDraft(appState.customFields, ''))
+      }
+    })
   }
 
-  function saveProduct() {
+  async function saveProduct() {
     if (!selectedSupplierId || !productForm.name.trim()) return
     const payload = {
       ...productForm,
       supplierId: selectedSupplierId,
-      id: productForm.id || uid('product'),
       unitPrice: Number(productForm.unitPrice || 0),
       minimumOrder: Number(productForm.minimumOrder || 0),
+      extraFields: normalizeDynamicValues(appState.customFields.product, productForm.extraFields),
     }
 
-    updateState((current) => ({
-      ...current,
-      suppliers: current.suppliers.map((supplier) => {
-        if (supplier.id !== selectedSupplierId) return supplier
-        const exists = supplier.products.some((product) => product.id === payload.id)
-        const products = exists
-          ? supplier.products.map((product) => (product.id === payload.id ? payload : product))
-          : [...supplier.products, payload]
-        return { ...supplier, products }
-      }),
-    }))
-
-    setProductForm(createEmptyProduct(appState.customFields, selectedSupplierId))
+    await runMutation(async () => {
+      if (productForm.id) {
+        await updateProduct(productForm.id, payload)
+      } else {
+        await createProduct(payload)
+      }
+      setProductForm(createEmptyProduct(appState.customFields, selectedSupplierId))
+    })
   }
 
   function editProduct(product) {
@@ -359,22 +420,14 @@ function App() {
     setActiveTab('catalog')
   }
 
-  function deleteProduct(productId) {
-    updateState((current) => ({
-      ...current,
-      suppliers: current.suppliers.map((supplier) =>
-        supplier.id === selectedSupplierId
-          ? {
-              ...supplier,
-              products: supplier.products.filter((product) => product.id !== productId),
-            }
-          : supplier,
-      ),
-    }))
-    setOrderDraft((current) => ({
-      ...current,
-      lines: current.lines.filter((line) => line.productId !== productId),
-    }))
+  async function removeProduct(productId) {
+    await runMutation(async () => {
+      await deleteProduct(productId)
+      setOrderDraft((current) => ({
+        ...current,
+        lines: current.lines.filter((line) => line.productId !== productId),
+      }))
+    })
   }
 
   function addLine(product) {
@@ -418,30 +471,23 @@ function App() {
     }))
   }
 
-  function finalizeOrder() {
-    if (!selectedSupplier || !orderDraft.lines.length) return
-    const createdAt = new Date().toISOString()
-    const order = {
-      id: uid('order'),
-      supplierId: selectedSupplier.id,
-      createdById: activeUserId,
-      createdAt,
-      status: 'Pendiente',
-      notes: orderDraft.notes,
-      extraFields: orderDraft.extraFields,
-      items: orderDraft.lines.filter((line) => Number(line.quantity) > 0),
-      total: currentOrderTotal,
-    }
-
-    updateState((current) => ({
-      ...current,
-      orders: [order, ...current.orders],
-    }))
-
-    setLastCreatedOrderId(order.id)
-    setOrderDraft(createEmptyOrderDraft(appState.customFields))
-    setCopyFeedback('')
-    setActiveTab('history')
+  async function finalizeOrder() {
+    if (!selectedSupplier || !orderDraft.lines.length || !activeUserId) return
+    await runMutation(async () => {
+      const created = await createOrder({
+        supplierId: selectedSupplier.id,
+        createdById: activeUserId,
+        status: 'Pendiente',
+        notes: orderDraft.notes,
+        extraFields: orderDraft.extraFields,
+        items: orderDraft.lines.filter((line) => Number(line.quantity) > 0),
+        total: currentOrderTotal,
+      })
+      setLastCreatedOrderId(created.id)
+      setOrderDraft(createEmptyOrderDraft(appState.customFields, selectedSupplier.id))
+      setCopyFeedback('')
+      setActiveTab('history')
+    })
   }
 
   async function copyMessage() {
@@ -458,22 +504,21 @@ function App() {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
-  function saveUser() {
+  async function saveUser() {
     if (!userForm.name.trim()) return
     const payload = {
       ...userForm,
-      id: userForm.id || uid('user'),
+      extraFields: normalizeDynamicValues(appState.customFields.user, userForm.extraFields),
     }
 
-    updateState((current) => {
-      const exists = current.users.some((user) => user.id === payload.id)
-      const users = exists
-        ? current.users.map((user) => (user.id === payload.id ? payload : user))
-        : [...current.users, payload]
-      return { ...current, users }
+    await runMutation(async () => {
+      if (userForm.id) {
+        await updateUser(userForm.id, payload)
+      } else {
+        await createUser(payload)
+      }
+      setUserForm(createEmptyUser(appState.customFields))
     })
-
-    setUserForm(createEmptyUser(appState.customFields))
   }
 
   function editUser(user) {
@@ -484,140 +529,52 @@ function App() {
     setActiveTab('admin')
   }
 
-  function deleteUser(userId) {
+  async function removeUser(userId) {
     if (userId === activeUserId) return
-    updateState((current) => ({
-      ...current,
-      users: current.users.filter((user) => user.id !== userId),
-    }))
+    await runMutation(async () => {
+      await deleteUser(userId)
+    })
   }
 
-  function addCustomField() {
+  async function addDynamicField() {
     if (!fieldForm.label.trim() || !fieldForm.key.trim()) return
-    const field = {
-      id: fieldForm.key.trim().toLowerCase().replace(/\s+/g, '_'),
-      label: fieldForm.label.trim(),
-      type: fieldForm.type,
-      placeholder: fieldForm.placeholder.trim(),
-    }
-
-    updateState((current) => {
-      const nextState = {
-        ...current,
-        customFields: {
-          ...current.customFields,
-          [fieldForm.entity]: [...current.customFields[fieldForm.entity], field],
-        },
-      }
-
-      nextState.suppliers = nextState.suppliers.map((supplier) => ({
-        ...supplier,
-        extraFields:
-          fieldForm.entity === 'supplier'
-            ? normalizeDynamicValues(nextState.customFields.supplier, supplier.extraFields)
-            : supplier.extraFields,
-        products: supplier.products.map((product) => ({
-          ...product,
-          extraFields:
-            fieldForm.entity === 'product'
-              ? normalizeDynamicValues(nextState.customFields.product, product.extraFields)
-              : product.extraFields,
-        })),
-      }))
-
-      nextState.users = nextState.users.map((user) => ({
-        ...user,
-        extraFields:
-          fieldForm.entity === 'user'
-            ? normalizeDynamicValues(nextState.customFields.user, user.extraFields)
-            : user.extraFields,
-      }))
-
-      nextState.orders = nextState.orders.map((order) => ({
-        ...order,
-        extraFields:
-          fieldForm.entity === 'order'
-            ? normalizeDynamicValues(nextState.customFields.order, order.extraFields)
-            : order.extraFields,
-      }))
-
-      syncFormsWithCustomFields(nextState)
-      return nextState
-    })
-
-    setFieldForm({
-      entity: 'supplier',
-      label: '',
-      key: '',
-      type: 'text',
-      placeholder: '',
+    await runMutation(async () => {
+      await createCustomField({
+        entity: fieldForm.entity,
+        label: fieldForm.label.trim(),
+        key: fieldForm.key.trim().toLowerCase().replace(/\s+/g, '_'),
+        fieldType: fieldForm.type,
+        placeholder: fieldForm.placeholder.trim(),
+      })
+      setFieldForm({
+        entity: 'supplier',
+        label: '',
+        key: '',
+        type: 'text',
+        placeholder: '',
+      })
     })
   }
 
-  function removeCustomField(entity, fieldId) {
-    updateState((current) => {
-      const nextState = {
-        ...current,
-        customFields: {
-          ...current.customFields,
-          [entity]: current.customFields[entity].filter((field) => field.id !== fieldId),
-        },
-      }
-
-      const stripField = (values = {}) =>
-        Object.fromEntries(Object.entries(values).filter(([key]) => key !== fieldId))
-
-      if (entity === 'supplier') {
-        nextState.suppliers = nextState.suppliers.map((supplier) => ({
-          ...supplier,
-          extraFields: stripField(supplier.extraFields),
-        }))
-      }
-      if (entity === 'product') {
-        nextState.suppliers = nextState.suppliers.map((supplier) => ({
-          ...supplier,
-          products: supplier.products.map((product) => ({
-            ...product,
-            extraFields: stripField(product.extraFields),
-          })),
-        }))
-      }
-      if (entity === 'user') {
-        nextState.users = nextState.users.map((user) => ({
-          ...user,
-          extraFields: stripField(user.extraFields),
-        }))
-      }
-      if (entity === 'order') {
-        nextState.orders = nextState.orders.map((order) => ({
-          ...order,
-          extraFields: stripField(order.extraFields),
-        }))
-      }
-
-      syncFormsWithCustomFields(nextState)
-      return nextState
+  async function removeDynamicField(entity, fieldId) {
+    await runMutation(async () => {
+      await deleteCustomField(entity, fieldId)
     })
   }
 
-  function updateOrderStatus(orderId, status) {
-    updateState((current) => ({
-      ...current,
-      orders: current.orders.map((order) => (order.id === orderId ? { ...order, status } : order)),
-    }))
+  async function changeOrderStatus(orderId, status) {
+    await runMutation(async () => {
+      await updateOrderStatus(orderId, status)
+    })
   }
 
-  const visibleOrders = appState.orders.filter((order) => {
-    const bySupplier = historyFilter === 'all' || order.supplierId === historyFilter
-    const byStatus = statusFilter === 'all' || order.status === statusFilter
-    return bySupplier && byStatus
-  })
+  if (loading) {
+    return <div className="state-screen">Cargando datos reales del sistema...</div>
+  }
 
-  const totalSuppliers = appState.suppliers.length
-  const totalProducts = appState.suppliers.reduce(
-    (count, supplier) => count + supplier.products.length,
-    0,
-  )
+  if (error && !appState.users.length && !appState.suppliers.length) {
+    return <div className="state-screen">No se pudo cargar la API: {error}</div>
+  }
 
   return (
     <div className="app-shell">
@@ -626,8 +583,8 @@ function App() {
           <p className="eyebrow">Osake Order Studio</p>
           <h1>Pedidos, catalogos y vendedores en una sola vista.</h1>
           <p className="lead">
-            Tomando como referencia tus planillas, la app centraliza proveedores,
-            formatos, tiempos de entrega, historial y salida directa a WhatsApp.
+            Ahora corriendo con API y base de datos real para usuarios, catalogo,
+            historial y administracion editable.
           </p>
         </div>
 
@@ -657,6 +614,7 @@ function App() {
                 startTransition(() => {
                   setSelectedSupplierId(supplier.id)
                   setOrderDraft((current) => ({ ...current, supplierId: supplier.id }))
+                  setProductForm((current) => ({ ...current, supplierId: supplier.id }))
                 })
               }}
             >
@@ -685,17 +643,20 @@ function App() {
                 </button>
               ))}
           </nav>
+          {mutating && <span className="pill solid">Guardando...</span>}
         </header>
+
+        {error && <div className="error-banner">{error}</div>}
 
         {activeTab === 'overview' && (
           <section className="grid two-up">
             <article className="panel hero-panel">
               <div className="hero-copy">
-                <h2>Analisis rapido de tus archivos</h2>
+                <h2>Estado actual del sistema</h2>
                 <ul className="clean-list">
-                  <li>Las planillas mezclan itinerario semanal, catalogo por proveedor y recepcion.</li>
-                  <li>Ya existe la logica de lead time, vendedor/contacto, formato y precio por item.</li>
-                  <li>La nueva app separa esos datos para poder escalar sin romper el flujo.</li>
+                  <li>Frontend React conectado a API Express.</li>
+                  <li>Base SQLite administrada por Prisma para crecer con migraciones.</li>
+                  <li>Usuarios, proveedores, productos, pedidos e historial persistidos en DB.</li>
                 </ul>
               </div>
               {selectedSupplier && (
@@ -722,12 +683,12 @@ function App() {
             </article>
 
             <article className="panel">
-              <h2>Estado de produccion recomendado</h2>
+              <h2>Preparado para evolucionar</h2>
               <ul className="clean-list">
-                <li>Usuarios con rol `admin` y `compras` ya separados en interfaz.</li>
-                <li>Historial general persistido en `localStorage` para no perder pedidos de prueba.</li>
-                <li>Campos dinamicos para crecer sin reescribir todo el formulario cada vez.</li>
-                <li>Base preparada para luego conectar backend, login real y base de datos.</li>
+                <li>Panel admin para editar estructura y datos operativos.</li>
+                <li>Campos dinamicos para absorber nuevos requerimientos del negocio.</li>
+                <li>Repositorio remoto ya conectado para control de cambios continuo.</li>
+                <li>Siguiente salto natural: login real, permisos finos y despliegue cloud.</li>
               </ul>
             </article>
           </section>
@@ -748,54 +709,17 @@ function App() {
               </div>
               <div className="form-grid">
                 <Field label="Proveedor" name="name" value={supplierForm.name} onChange={handleSupplierFormChange} />
-                <Field
-                  label="Vendedor"
-                  name="sellerName"
-                  value={supplierForm.sellerName}
-                  onChange={handleSupplierFormChange}
-                />
-                <Field
-                  label="WhatsApp vendedor"
-                  name="sellerPhone"
-                  value={supplierForm.sellerPhone}
-                  onChange={handleSupplierFormChange}
-                />
-                <Field
-                  label="Categoria"
-                  name="category"
-                  value={supplierForm.category}
-                  onChange={handleSupplierFormChange}
-                />
-                <Field
-                  label="Tiempo de entrega"
-                  name="deliveryLeadTime"
-                  value={supplierForm.deliveryLeadTime}
-                  onChange={handleSupplierFormChange}
-                />
-                <Field
-                  label="Dias de entrega"
-                  name="deliveryDays"
-                  value={supplierForm.deliveryDays}
-                  onChange={handleSupplierFormChange}
-                />
-                <Field
-                  label="Pago"
-                  name="paymentTerms"
-                  value={supplierForm.paymentTerms}
-                  onChange={handleSupplierFormChange}
-                />
-                <TextArea
-                  label="Notas"
-                  name="notes"
-                  value={supplierForm.notes}
-                  onChange={handleSupplierFormChange}
-                />
+                <Field label="Vendedor" name="sellerName" value={supplierForm.sellerName} onChange={handleSupplierFormChange} />
+                <Field label="WhatsApp vendedor" name="sellerPhone" value={supplierForm.sellerPhone} onChange={handleSupplierFormChange} />
+                <Field label="Categoria" name="category" value={supplierForm.category} onChange={handleSupplierFormChange} />
+                <Field label="Tiempo de entrega" name="deliveryLeadTime" value={supplierForm.deliveryLeadTime} onChange={handleSupplierFormChange} />
+                <Field label="Dias de entrega" name="deliveryDays" value={supplierForm.deliveryDays} onChange={handleSupplierFormChange} />
+                <Field label="Pago" name="paymentTerms" value={supplierForm.paymentTerms} onChange={handleSupplierFormChange} />
+                <TextArea label="Notas" name="notes" value={supplierForm.notes} onChange={handleSupplierFormChange} />
                 <DynamicFieldGroup
                   fields={appState.customFields.supplier}
                   values={supplierForm.extraFields}
-                  onChange={(fieldId, value) =>
-                    handleExtraFieldChange(setSupplierForm, fieldId, value)
-                  }
+                  onChange={(fieldId, value) => handleExtraFieldChange(setSupplierForm, fieldId, value)}
                 />
               </div>
               <button type="button" className="primary" onClick={saveSupplier}>
@@ -814,11 +738,7 @@ function App() {
                         <button type="button" className="ghost" onClick={() => editSupplier(supplier)}>
                           Editar
                         </button>
-                        <button
-                          type="button"
-                          className="ghost danger"
-                          onClick={() => deleteSupplier(supplier.id)}
-                        >
+                        <button type="button" className="ghost danger" onClick={() => removeSupplier(supplier.id)}>
                           Eliminar
                         </button>
                       </div>
@@ -832,9 +752,7 @@ function App() {
               <div className="section-head">
                 <div>
                   <h2>Catalogo de {selectedSupplier?.name || 'proveedor'}</h2>
-                  <p className="muted">
-                    Maneja producto, variedad, tamano, formato, minimo y precio.
-                  </p>
+                  <p className="muted">Maneja producto, variedad, tamano, formato, minimo y precio.</p>
                 </div>
                 <button
                   type="button"
@@ -846,46 +764,17 @@ function App() {
               </div>
               <div className="form-grid">
                 <Field label="Producto" name="name" value={productForm.name} onChange={handleProductFormChange} />
-                <Field
-                  label="Variedad"
-                  name="variety"
-                  value={productForm.variety}
-                  onChange={handleProductFormChange}
-                />
+                <Field label="Variedad" name="variety" value={productForm.variety} onChange={handleProductFormChange} />
                 <Field label="Tamano" name="size" value={productForm.size} onChange={handleProductFormChange} />
-                <Field
-                  label="Formato"
-                  name="format"
-                  value={productForm.format}
-                  onChange={handleProductFormChange}
-                />
-                <Field
-                  label="Precio unitario"
-                  name="unitPrice"
-                  type="number"
-                  value={productForm.unitPrice}
-                  onChange={handleProductFormChange}
-                />
-                <Field
-                  label="Minimo"
-                  name="minimumOrder"
-                  type="number"
-                  value={productForm.minimumOrder}
-                  onChange={handleProductFormChange}
-                />
-                <Field
-                  label="Override entrega"
-                  name="deliveryOverride"
-                  value={productForm.deliveryOverride}
-                  onChange={handleProductFormChange}
-                />
+                <Field label="Formato" name="format" value={productForm.format} onChange={handleProductFormChange} />
+                <Field label="Precio unitario" name="unitPrice" type="number" value={productForm.unitPrice} onChange={handleProductFormChange} />
+                <Field label="Minimo" name="minimumOrder" type="number" value={productForm.minimumOrder} onChange={handleProductFormChange} />
+                <Field label="Override entrega" name="deliveryOverride" value={productForm.deliveryOverride} onChange={handleProductFormChange} />
                 <TextArea label="Nota SKU" name="note" value={productForm.note} onChange={handleProductFormChange} />
                 <DynamicFieldGroup
                   fields={appState.customFields.product}
                   values={productForm.extraFields}
-                  onChange={(fieldId, value) =>
-                    handleExtraFieldChange(setProductForm, fieldId, value)
-                  }
+                  onChange={(fieldId, value) => handleExtraFieldChange(setProductForm, fieldId, value)}
                 />
               </div>
               <button type="button" className="primary" onClick={saveProduct}>
@@ -897,9 +786,7 @@ function App() {
                   <div key={product.id} className="product-card">
                     <div>
                       <strong>{product.name}</strong>
-                      <p>
-                        {[product.variety, product.size, product.format].filter(Boolean).join(' · ')}
-                      </p>
+                      <p>{[product.variety, product.size, product.format].filter(Boolean).join(' · ')}</p>
                       <small>{currency(product.unitPrice)}</small>
                     </div>
                     {isAdmin && (
@@ -907,11 +794,7 @@ function App() {
                         <button type="button" className="ghost" onClick={() => editProduct(product)}>
                           Editar
                         </button>
-                        <button
-                          type="button"
-                          className="ghost danger"
-                          onClick={() => deleteProduct(product.id)}
-                        >
+                        <button type="button" className="ghost danger" onClick={() => removeProduct(product.id)}>
                           Eliminar
                         </button>
                       </div>
@@ -929,26 +812,14 @@ function App() {
               <div className="section-head">
                 <div>
                   <h2>Selecciona productos</h2>
-                  <p className="muted">
-                    Busca por nombre, variedad, tamano o formato.
-                  </p>
+                  <p className="muted">Busca por nombre, variedad, tamano o formato.</p>
                 </div>
-                <input
-                  className="search"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar producto..."
-                />
+                <input className="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar producto..." />
               </div>
 
               <div className="catalog-grid">
                 {filteredProducts.map((product) => (
-                  <button
-                    key={product.id}
-                    type="button"
-                    className="catalog-card"
-                    onClick={() => addLine(product)}
-                  >
+                  <button key={product.id} type="button" className="catalog-card" onClick={() => addLine(product)}>
                     <span>{product.name}</span>
                     <small>{[product.variety, product.size].filter(Boolean).join(' · ')}</small>
                     <small>{product.format}</small>
@@ -962,9 +833,7 @@ function App() {
               <div className="section-head">
                 <div>
                   <h2>Pedido actual</h2>
-                  <p className="muted">
-                    Vendedor: {selectedSupplier?.sellerName || 'sin seleccionar'}
-                  </p>
+                  <p className="muted">Vendedor: {selectedSupplier?.sellerName || 'sin seleccionar'}</p>
                 </div>
                 <span className="pill solid">{currency(currentOrderTotal)}</span>
               </div>
@@ -977,12 +846,7 @@ function App() {
                       <small>{[line.variety, line.size, line.format].filter(Boolean).join(' · ')}</small>
                     </div>
                     <div className="line-controls">
-                      <input
-                        type="number"
-                        min="0"
-                        value={line.quantity}
-                        onChange={(event) => updateLineQuantity(line.productId, event.target.value)}
-                      />
+                      <input type="number" min="0" value={line.quantity} onChange={(event) => updateLineQuantity(line.productId, event.target.value)} />
                       <span>{currency(line.unitPrice * line.quantity)}</span>
                       <button type="button" className="ghost danger" onClick={() => removeLine(line.productId)}>
                         Quitar
@@ -996,9 +860,7 @@ function App() {
                 label="Observaciones del pedido"
                 name="notes"
                 value={orderDraft.notes}
-                onChange={(event) =>
-                  setOrderDraft((current) => ({ ...current, notes: event.target.value }))
-                }
+                onChange={(event) => setOrderDraft((current) => ({ ...current, notes: event.target.value }))}
               />
               <DynamicFieldGroup
                 fields={appState.customFields.order}
@@ -1048,21 +910,13 @@ function App() {
                   const supplier = getSupplierById(appState, order.supplierId)
                   const creator = getUserById(appState, order.createdById)
                   return (
-                    <div
-                      key={order.id}
-                      className={`history-card ${lastCreatedOrderId === order.id ? 'accented' : ''}`}
-                    >
+                    <div key={order.id} className={`history-card ${lastCreatedOrderId === order.id ? 'accented' : ''}`}>
                       <div className="history-head">
                         <div>
                           <strong>{supplier?.name}</strong>
-                          <small>
-                            {creator?.name} · {formatDate(order.createdAt)}
-                          </small>
+                          <small>{creator?.name} · {formatDate(order.createdAt)}</small>
                         </div>
-                        <select
-                          value={order.status}
-                          onChange={(event) => updateOrderStatus(order.id, event.target.value)}
-                        >
+                        <select value={order.status} onChange={(event) => changeOrderStatus(order.id, event.target.value)}>
                           <option value="Pendiente">Pendiente</option>
                           <option value="Enviado">Enviado</option>
                           <option value="Recibido">Recibido</option>
@@ -1086,9 +940,7 @@ function App() {
               <div className="section-head">
                 <div>
                   <h2>Texto para WhatsApp</h2>
-                  <p className="muted">
-                    Se genera desde el ultimo pedido guardado.
-                  </p>
+                  <p className="muted">Se genera desde el ultimo pedido guardado.</p>
                 </div>
                 <div className="row-actions">
                   <button type="button" className="ghost" onClick={copyMessage}>
@@ -1110,11 +962,7 @@ function App() {
             <article className="panel">
               <div className="section-head">
                 <h2>Usuarios</h2>
-                <button
-                  type="button"
-                  className="ghost"
-                  onClick={() => setUserForm(createEmptyUser(appState.customFields))}
-                >
+                <button type="button" className="ghost" onClick={() => setUserForm(createEmptyUser(appState.customFields))}>
                   Nuevo usuario
                 </button>
               </div>
@@ -1132,9 +980,7 @@ function App() {
                 <DynamicFieldGroup
                   fields={appState.customFields.user}
                   values={userForm.extraFields}
-                  onChange={(fieldId, value) =>
-                    handleExtraFieldChange(setUserForm, fieldId, value)
-                  }
+                  onChange={(fieldId, value) => handleExtraFieldChange(setUserForm, fieldId, value)}
                 />
               </div>
               <button type="button" className="primary" onClick={saveUser}>
@@ -1152,12 +998,7 @@ function App() {
                       <button type="button" className="ghost" onClick={() => editUser(user)}>
                         Editar
                       </button>
-                      <button
-                        type="button"
-                        className="ghost danger"
-                        disabled={user.id === activeUserId}
-                        onClick={() => deleteUser(user.id)}
-                      >
+                      <button type="button" className="ghost danger" disabled={user.id === activeUserId} onClick={() => removeUser(user.id)}>
                         Eliminar
                       </button>
                     </div>
@@ -1170,68 +1011,32 @@ function App() {
               <div className="section-head">
                 <div>
                   <h2>Campos dinamicos</h2>
-                  <p className="muted">
-                    Agrega nuevos campos sin tocar el formulario completo.
-                  </p>
+                  <p className="muted">Agrega nuevos campos sin tocar el formulario completo.</p>
                 </div>
               </div>
               <div className="form-grid">
                 <label className="field">
                   <span>Entidad</span>
-                  <select
-                    value={fieldForm.entity}
-                    onChange={(event) =>
-                      setFieldForm((current) => ({ ...current, entity: event.target.value }))
-                    }
-                  >
+                  <select value={fieldForm.entity} onChange={(event) => setFieldForm((current) => ({ ...current, entity: event.target.value }))}>
                     <option value="supplier">Proveedor</option>
                     <option value="product">Producto</option>
                     <option value="order">Pedido</option>
                     <option value="user">Usuario</option>
                   </select>
                 </label>
-                <Field
-                  label="Etiqueta"
-                  name="label"
-                  value={fieldForm.label}
-                  onChange={(event) =>
-                    setFieldForm((current) => ({ ...current, label: event.target.value }))
-                  }
-                />
-                <Field
-                  label="Clave"
-                  name="key"
-                  value={fieldForm.key}
-                  onChange={(event) =>
-                    setFieldForm((current) => ({ ...current, key: event.target.value }))
-                  }
-                />
+                <Field label="Etiqueta" name="label" value={fieldForm.label} onChange={(event) => setFieldForm((current) => ({ ...current, label: event.target.value }))} />
+                <Field label="Clave" name="key" value={fieldForm.key} onChange={(event) => setFieldForm((current) => ({ ...current, key: event.target.value }))} />
                 <label className="field">
                   <span>Tipo</span>
-                  <select
-                    value={fieldForm.type}
-                    onChange={(event) =>
-                      setFieldForm((current) => ({ ...current, type: event.target.value }))
-                    }
-                  >
+                  <select value={fieldForm.type} onChange={(event) => setFieldForm((current) => ({ ...current, type: event.target.value }))}>
                     <option value="text">Texto</option>
                     <option value="number">Numero</option>
                     <option value="textarea">Area de texto</option>
                   </select>
                 </label>
-                <Field
-                  label="Placeholder"
-                  name="placeholder"
-                  value={fieldForm.placeholder}
-                  onChange={(event) =>
-                    setFieldForm((current) => ({
-                      ...current,
-                      placeholder: event.target.value,
-                    }))
-                  }
-                />
+                <Field label="Placeholder" name="placeholder" value={fieldForm.placeholder} onChange={(event) => setFieldForm((current) => ({ ...current, placeholder: event.target.value }))} />
               </div>
-              <button type="button" className="primary" onClick={addCustomField}>
+              <button type="button" className="primary" onClick={addDynamicField}>
                 Agregar campo
               </button>
 
@@ -1244,15 +1049,9 @@ function App() {
                       <div key={field.id} className="list-row">
                         <div>
                           <strong>{field.label}</strong>
-                          <small>
-                            {field.id} · {field.type}
-                          </small>
+                          <small>{field.id} · {field.type}</small>
                         </div>
-                        <button
-                          type="button"
-                          className="ghost danger"
-                          onClick={() => removeCustomField(entity, field.id)}
-                        >
+                        <button type="button" className="ghost danger" onClick={() => removeDynamicField(entity, field.id)}>
                           Eliminar
                         </button>
                       </div>
@@ -1277,22 +1076,12 @@ function DynamicFieldGroup({ fields, values, onChange }) {
         field.type === 'textarea' ? (
           <label className="field field-wide" key={field.id}>
             <span>{field.label}</span>
-            <textarea
-              rows="3"
-              value={values[field.id] ?? ''}
-              placeholder={field.placeholder}
-              onChange={(event) => onChange(field.id, event.target.value)}
-            />
+            <textarea rows="3" value={values[field.id] ?? ''} placeholder={field.placeholder} onChange={(event) => onChange(field.id, event.target.value)} />
           </label>
         ) : (
           <label className="field" key={field.id}>
             <span>{field.label}</span>
-            <input
-              type={field.type}
-              value={values[field.id] ?? ''}
-              placeholder={field.placeholder}
-              onChange={(event) => onChange(field.id, event.target.value)}
-            />
+            <input type={field.type} value={values[field.id] ?? ''} placeholder={field.placeholder} onChange={(event) => onChange(field.id, event.target.value)} />
           </label>
         ),
       )}

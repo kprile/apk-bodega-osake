@@ -1,0 +1,25 @@
+{
+  "name": "apk-osake-cod",
+  "version": "1.0.0",
+  "description": "Repositorio local de trabajo para la aplicacion de pedidos de Osake.",
+  "scripts": {
+    "dev": "concurrently \"npm --prefix server run dev\" \"npm --prefix pedido-app run dev\"",
+    "dev:api": "npm --prefix server run dev",
+    "dev:web": "npm --prefix pedido-app run dev",
+    "build": "npm --prefix pedido-app run build",
+    "db:seed": "npm --prefix server run db:seed"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kprile/apk-bodega-osake.git"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/kprile/apk-bodega-osake/issues"
+  },
+  "homepage": "https://github.com/kprile/apk-bodega-osake#readme",
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}
