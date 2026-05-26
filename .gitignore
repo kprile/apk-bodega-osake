@@ -1,0 +1,4 @@
+pedido-app/node_modules/
+pedido-app/dist/
+pedido-app/.vite/
+*.log
