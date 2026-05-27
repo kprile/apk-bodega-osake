@@ -31,7 +31,7 @@ app.use(express.json())
 const extraFieldSchema = z.record(z.string(), z.union([z.string(), z.number()]))
 
 const userSchema = z.object({
-  id: z.string().optional(),
+  id: z.preprocess((value) => (value === null ? undefined : value), z.string().optional()),
   name: z.string().min(1),
   role: z.enum(['admin', 'buyer']),
   phone: z.string().default(''),
@@ -40,7 +40,7 @@ const userSchema = z.object({
 })
 
 const supplierSchema = z.object({
-  id: z.string().optional(),
+  id: z.preprocess((value) => (value === null ? undefined : value), z.string().optional()),
   name: z.string().min(1),
   sellerName: z.string().default(''),
   sellerPhone: z.string().default(''),
@@ -53,7 +53,7 @@ const supplierSchema = z.object({
 })
 
 const productSchema = z.object({
-  id: z.string().optional(),
+  id: z.preprocess((value) => (value === null ? undefined : value), z.string().optional()),
   supplierId: z.string(),
   name: z.string().min(1),
   variety: z.string().default(''),

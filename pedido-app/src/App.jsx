@@ -67,6 +67,15 @@ function prepareEntity(entity, values) {
   }, {})
 }
 
+function sanitizeId(payload) {
+  if (payload.id === null || payload.id === undefined || payload.id === '') {
+    const { ...rest } = payload
+    delete rest.id
+    return rest
+  }
+  return payload
+}
+
 function createEmptySupplier(customFields) {
   return {
     id: null,
@@ -362,10 +371,10 @@ function App() {
 
   async function saveSupplier() {
     if (!supplierForm.name.trim()) return
-    const payload = {
+    const payload = sanitizeId({
       ...supplierForm,
       extraFields: normalizeDynamicValues(appState.customFields.supplier, supplierForm.extraFields),
-    }
+    })
 
     await runMutation(async () => {
       if (supplierForm.id) {
@@ -397,13 +406,13 @@ function App() {
 
   async function saveProduct() {
     if (!selectedSupplierId || !productForm.name.trim()) return
-    const payload = {
+    const payload = sanitizeId({
       ...productForm,
       supplierId: selectedSupplierId,
       unitPrice: Number(productForm.unitPrice || 0),
       minimumOrder: Number(productForm.minimumOrder || 0),
       extraFields: normalizeDynamicValues(appState.customFields.product, productForm.extraFields),
-    }
+    })
 
     await runMutation(async () => {
       if (productForm.id) {
@@ -510,10 +519,10 @@ function App() {
 
   async function saveUser() {
     if (!userForm.name.trim()) return
-    const payload = {
+    const payload = sanitizeId({
       ...userForm,
       extraFields: normalizeDynamicValues(appState.customFields.user, userForm.extraFields),
-    }
+    })
 
     await runMutation(async () => {
       if (userForm.id) {
@@ -1065,10 +1074,10 @@ function App() {
               </div>
               <div className="info-box">
                 <p>
-                  <strong>`supplier`</strong> significa <strong>proveedor</strong>.
+                  <strong>Proveedor</strong>: este campo aplica a los datos del proveedor.
                 </p>
                 <p>
-                  <strong>`placeholder`</strong> es el texto de ayuda que aparece dentro del campo antes de escribir.
+                  <strong>Texto de ayuda</strong>: es el ejemplo que aparece dentro del campo antes de escribir.
                 </p>
               </div>
               <div className="form-grid">
@@ -1091,7 +1100,7 @@ function App() {
                     <option value="textarea">Area de texto</option>
                   </select>
                 </label>
-                <Field label="Placeholder" name="placeholder" value={fieldForm.placeholder} onChange={(event) => setFieldForm((current) => ({ ...current, placeholder: event.target.value }))} />
+                <Field label="Texto de ayuda" name="placeholder" value={fieldForm.placeholder} onChange={(event) => setFieldForm((current) => ({ ...current, placeholder: event.target.value }))} />
               </div>
               <button type="button" className="primary" onClick={addDynamicField}>
                 Agregar campo
