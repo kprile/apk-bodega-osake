@@ -48,6 +48,26 @@ function sanitizePhone(phone) {
   return String(phone || '').replace(/[^\d]/g, '')
 }
 
+function toNonNegativeInteger(value) {
+  if (value === '' || value === null || value === undefined) return 0
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) return 0
+  return Math.max(0, Math.trunc(parsed))
+}
+
+function validateEmail(email) {
+  if (!email) return true
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
+
+function normalizeFieldKey(value) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '_')
+    .replace(/[^a-z0-9_]/g, '')
+}
+
 function fieldDefault(type) {
   return type === 'number' ? 0 : ''
 }
@@ -370,7 +390,11 @@ function App() {
   }
 
   async function saveSupplier() {
-    if (!supplierForm.name.trim()) return
+    if (!supplierForm.name.trim()) {
+      setError('Ingresa el nombre del proveedor')
+      return
+    }
+
     const payload = sanitizeId({
       ...supplierForm,
       extraFields: normalizeDynamicValues(appState.customFields.supplier, supplierForm.extraFields),
@@ -405,12 +429,23 @@ function App() {
   }
 
   async function saveProduct() {
-    if (!selectedSupplierId || !productForm.name.trim()) return
+    if (!selectedSupplierId) {
+      setError('Selecciona un proveedor antes de crear productos')
+      return
+    }
+
+    if (!productForm.name.trim()) {
+      setError('Ingresa el nombre del producto')
+      return
+    }
+
+    const unitPrice = toNonNegativeInteger(productForm.unitPrice)
+    const minimumOrder = toNonNegativeInteger(productForm.minimumOrder)
     const payload = sanitizeId({
       ...productForm,
       supplierId: selectedSupplierId,
-      unitPrice: Number(productForm.unitPrice || 0),
-      minimumOrder: Number(productForm.minimumOrder || 0),
+      unitPrice,
+      minimumOrder,
       extraFields: normalizeDynamicValues(appState.customFields.product, productForm.extraFields),
     })
 
@@ -472,7 +507,9 @@ function App() {
     setOrderDraft((current) => ({
       ...current,
       lines: current.lines.map((line) =>
-        line.productId === productId ? { ...line, quantity: Number(quantity || 0) } : line,
+        line.productId === productId
+          ? { ...line, quantity: toNonNegativeInteger(quantity) }
+          : line,
       ),
     }))
   }
@@ -485,15 +522,37 @@ function App() {
   }
 
   async function finalizeOrder() {
-    if (!selectedSupplier || !orderDraft.lines.length || !activeUserId) return
+    if (!selectedSupplier) {
+      setError('Selecciona un proveedor para crear el pedido')
+      return
+    }
+
+    if (!activeUserId) {
+      setError('Selecciona un usuario activo antes de guardar el pedido')
+      return
+    }
+
+    const items = orderDraft.lines
+      .map((line) => ({
+        ...line,
+        quantity: toNonNegativeInteger(line.quantity),
+        unitPrice: toNonNegativeInteger(line.unitPrice),
+      }))
+      .filter((line) => line.quantity > 0)
+
+    if (!items.length) {
+      setError('Agrega al menos un producto con cantidad mayor a cero')
+      return
+    }
+
     await runMutation(async () => {
       const created = await createOrder({
         supplierId: selectedSupplier.id,
         createdById: activeUserId,
         status: 'Pendiente',
         notes: orderDraft.notes,
-        extraFields: orderDraft.extraFields,
-        items: orderDraft.lines.filter((line) => Number(line.quantity) > 0),
+        extraFields: normalizeDynamicValues(appState.customFields.order, orderDraft.extraFields),
+        items,
         total: currentOrderTotal,
       })
       setLastCreatedOrderId(created.id)
@@ -505,22 +564,40 @@ function App() {
 
   async function copyMessage() {
     if (!messageText) return
-    await navigator.clipboard.writeText(messageText)
-    setCopyFeedback('Texto copiado')
-    window.setTimeout(() => setCopyFeedback(''), 1800)
+    try {
+      await navigator.clipboard.writeText(messageText)
+      setCopyFeedback('Texto copiado')
+      window.setTimeout(() => setCopyFeedback(''), 1800)
+    } catch {
+      setError('No se pudo copiar el texto en este navegador')
+    }
   }
 
   function openWhatsApp() {
     if (!messageTargetSupplier || !messageText) return
     const phone = sanitizePhone(messageTargetSupplier.sellerPhone)
+    if (!phone) {
+      setError('El proveedor no tiene WhatsApp registrado')
+      return
+    }
     const url = `https://wa.me/${phone}?text=${encodeURIComponent(messageText)}`
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   async function saveUser() {
-    if (!userForm.name.trim()) return
+    if (!userForm.name.trim()) {
+      setError('Ingresa el nombre del usuario')
+      return
+    }
+
+    if (!validateEmail(userForm.email.trim())) {
+      setError('Ingresa un correo valido')
+      return
+    }
+
     const payload = sanitizeId({
       ...userForm,
+      email: userForm.email.trim(),
       extraFields: normalizeDynamicValues(appState.customFields.user, userForm.extraFields),
     })
 
@@ -550,12 +627,27 @@ function App() {
   }
 
   async function addDynamicField() {
-    if (!fieldForm.label.trim() || !fieldForm.key.trim()) return
+    if (!fieldForm.label.trim()) {
+      setError('Ingresa la etiqueta del campo dinamico')
+      return
+    }
+
+    const normalizedKey = normalizeFieldKey(fieldForm.key)
+    if (!normalizedKey) {
+      setError('La clave solo puede usar letras, numeros y guion bajo')
+      return
+    }
+
+    if (appState.customFields[fieldForm.entity].some((field) => field.id === normalizedKey)) {
+      setError('Ya existe una clave igual en esa seccion')
+      return
+    }
+
     await runMutation(async () => {
       await createCustomField({
         entity: fieldForm.entity,
         label: fieldForm.label.trim(),
-        key: fieldForm.key.trim().toLowerCase().replace(/\s+/g, '_'),
+        key: normalizedKey,
         fieldType: fieldForm.type,
         placeholder: fieldForm.placeholder.trim(),
       })
@@ -1166,7 +1258,15 @@ function DynamicFieldGroup({ fields, values, onChange }) {
               type={field.type}
               value={values[field.id] ?? ''}
               placeholder={field.placeholder}
-              onChange={(event) => onChange(field.id, event.target.value)}
+              min={field.type === 'number' ? '0' : undefined}
+              onChange={(event) =>
+                onChange(
+                  field.id,
+                  field.type === 'number'
+                    ? toNonNegativeInteger(event.target.value)
+                    : event.target.value,
+                )
+              }
             />
           </label>
         ),
@@ -1179,7 +1279,7 @@ function Field({ label, name, value, onChange, type = 'text' }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input type={type} name={name} value={value} onChange={onChange} />
+      <input type={type} name={name} value={value ?? ''} onChange={onChange} />
     </label>
   )
 }
@@ -1188,7 +1288,7 @@ function TextArea({ label, name, value, onChange }) {
   return (
     <label className="field field-wide">
       <span>{label}</span>
-      <textarea rows="3" name={name} value={value} onChange={onChange} />
+      <textarea rows="3" name={name} value={value ?? ''} onChange={onChange} />
     </label>
   )
 }

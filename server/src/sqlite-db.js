@@ -38,6 +38,20 @@ function parseItems(value) {
   }
 }
 
+function createHttpError(status, message) {
+  const error = new Error(message)
+  error.status = status
+  return error
+}
+
+function notFound(message) {
+  return createHttpError(404, message)
+}
+
+function conflict(message) {
+  return createHttpError(409, message)
+}
+
 function initSchema() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
@@ -110,8 +124,41 @@ function initSchema() {
   `)
 }
 
+function deduplicateCustomFields() {
+  const fields = db
+    .prepare('SELECT id, entity, field_key, created_at FROM custom_fields ORDER BY created_at ASC, id ASC')
+    .all()
+
+  const seen = new Set()
+  const duplicates = []
+
+  for (const field of fields) {
+    const signature = `${field.entity}:${field.field_key}`
+    if (seen.has(signature)) {
+      duplicates.push(field.id)
+      continue
+    }
+    seen.add(signature)
+  }
+
+  if (!duplicates.length) return
+
+  const removeDuplicate = db.prepare('DELETE FROM custom_fields WHERE id = ?')
+  db.exec('BEGIN')
+  try {
+    for (const id of duplicates) {
+      removeDuplicate.run(id)
+    }
+    db.exec('COMMIT')
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
+  }
+}
+
 export function resetAndSeedDatabase() {
   initSchema()
+  deduplicateCustomFields()
   const count = db.prepare('SELECT COUNT(*) AS count FROM users').get().count
   if (count > 0) return
   seedDatabase()
@@ -435,17 +482,24 @@ export function createUser(user) {
 }
 
 export function updateUser(id, user) {
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE users
     SET name = ?, role = ?, phone = ?, email = ?, extra_fields = ?, updated_at = ?
     WHERE id = ?
   `).run(user.name, user.role, user.phone, user.email, stringify(user.extraFields), now(), id)
 
+  if (!result.changes) {
+    throw notFound('Usuario no encontrado')
+  }
+
   return getBootstrap().users.find((item) => item.id === id)
 }
 
 export function deleteUser(id) {
-  db.prepare('DELETE FROM users WHERE id = ?').run(id)
+  const result = db.prepare('DELETE FROM users WHERE id = ?').run(id)
+  if (!result.changes) {
+    throw notFound('Usuario no encontrado')
+  }
 }
 
 export function createSupplier(supplier) {
@@ -473,7 +527,7 @@ export function createSupplier(supplier) {
 }
 
 export function updateSupplier(id, supplier) {
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE suppliers
     SET name = ?, seller_name = ?, seller_phone = ?, category = ?, delivery_lead_time = ?,
         delivery_days = ?, payment_terms = ?, notes = ?, extra_fields = ?, updated_at = ?
@@ -492,11 +546,18 @@ export function updateSupplier(id, supplier) {
     id,
   )
 
+  if (!result.changes) {
+    throw notFound('Proveedor no encontrado')
+  }
+
   return getBootstrap().suppliers.find((item) => item.id === id)
 }
 
 export function deleteSupplier(id) {
-  db.prepare('DELETE FROM suppliers WHERE id = ?').run(id)
+  const result = db.prepare('DELETE FROM suppliers WHERE id = ?').run(id)
+  if (!result.changes) {
+    throw notFound('Proveedor no encontrado')
+  }
 }
 
 export function createProduct(product) {
@@ -527,7 +588,7 @@ export function createProduct(product) {
 }
 
 export function updateProduct(id, product) {
-  db.prepare(`
+  const result = db.prepare(`
     UPDATE products
     SET supplier_id = ?, name = ?, variety = ?, size = ?, format = ?, unit_price = ?,
         delivery_override = ?, minimum_order = ?, note = ?, extra_fields = ?, updated_at = ?
@@ -547,13 +608,20 @@ export function updateProduct(id, product) {
     id,
   )
 
+  if (!result.changes) {
+    throw notFound('Producto no encontrado')
+  }
+
   return getBootstrap().suppliers
     .flatMap((supplier) => supplier.products)
     .find((item) => item.id === id)
 }
 
 export function deleteProduct(id) {
-  db.prepare('DELETE FROM products WHERE id = ?').run(id)
+  const result = db.prepare('DELETE FROM products WHERE id = ?').run(id)
+  if (!result.changes) {
+    throw notFound('Producto no encontrado')
+  }
 }
 
 export function createOrder(order) {
@@ -579,11 +647,26 @@ export function createOrder(order) {
 }
 
 export function updateOrderStatusById(id, status) {
-  db.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE id = ?').run(status, now(), id)
+  const result = db.prepare('UPDATE orders SET status = ?, updated_at = ? WHERE id = ?').run(
+    status,
+    now(),
+    id,
+  )
+  if (!result.changes) {
+    throw notFound('Pedido no encontrado')
+  }
   return getBootstrap().orders.find((item) => item.id === id)
 }
 
 export function createCustomField(field) {
+  const existing = db
+    .prepare('SELECT id FROM custom_fields WHERE entity = ? AND field_key = ? LIMIT 1')
+    .get(field.entity, field.key)
+
+  if (existing) {
+    throw conflict('Ya existe un campo con esa clave para esa seccion')
+  }
+
   const id = crypto.randomUUID()
   db.prepare(`
     INSERT INTO custom_fields (id, entity, label, field_key, field_type, placeholder, created_at)
@@ -599,5 +682,11 @@ export function createCustomField(field) {
 }
 
 export function deleteCustomField(entity, key) {
-  db.prepare('DELETE FROM custom_fields WHERE entity = ? AND field_key = ?').run(entity, key)
+  const result = db.prepare('DELETE FROM custom_fields WHERE entity = ? AND field_key = ?').run(
+    entity,
+    key,
+  )
+  if (!result.changes) {
+    throw notFound('Campo dinamico no encontrado')
+  }
 }

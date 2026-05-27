@@ -24,63 +24,97 @@ import {
 
 const app = express()
 const port = process.env.PORT || 4000
+const orderStatuses = ['Pendiente', 'Enviado', 'Recibido']
 
 app.use(cors())
 app.use(express.json())
 
-const extraFieldSchema = z.record(z.string(), z.union([z.string(), z.number()]))
+const optionalIdSchema = z.preprocess(
+  (value) => (value === null || value === '' ? undefined : value),
+  z.string().optional(),
+)
+
+function nullableStringSchema() {
+  return z.preprocess(
+    (value) => (value === null || value === undefined ? '' : String(value).trim()),
+    z.string(),
+  )
+}
+
+function requiredStringSchema() {
+  return z.preprocess(
+    (value) => (value === null || value === undefined ? '' : String(value).trim()),
+    z.string().min(1),
+  )
+}
+
+const extraFieldSchema = z.preprocess(
+  (value) => {
+    if (value === null || value === undefined || typeof value !== 'object' || Array.isArray(value)) {
+      return {}
+    }
+
+    return Object.fromEntries(
+      Object.entries(value).map(([key, entry]) => [
+        key,
+        entry === null || entry === undefined ? '' : entry,
+      ]),
+    )
+  },
+  z.record(z.string(), z.union([z.string(), z.number()])),
+)
 
 const userSchema = z.object({
-  id: z.preprocess((value) => (value === null ? undefined : value), z.string().optional()),
-  name: z.string().min(1),
+  id: optionalIdSchema,
+  name: requiredStringSchema(),
   role: z.enum(['admin', 'buyer']),
-  phone: z.string().default(''),
-  email: z.string().default(''),
+  phone: nullableStringSchema().default(''),
+  email: nullableStringSchema().default(''),
   extraFields: extraFieldSchema.default({}),
 })
 
 const supplierSchema = z.object({
-  id: z.preprocess((value) => (value === null ? undefined : value), z.string().optional()),
-  name: z.string().min(1),
-  sellerName: z.string().default(''),
-  sellerPhone: z.string().default(''),
-  category: z.string().default(''),
-  deliveryLeadTime: z.string().default(''),
-  deliveryDays: z.string().default(''),
-  paymentTerms: z.string().default(''),
-  notes: z.string().default(''),
+  id: optionalIdSchema,
+  name: requiredStringSchema(),
+  sellerName: nullableStringSchema().default(''),
+  sellerPhone: nullableStringSchema().default(''),
+  category: nullableStringSchema().default(''),
+  deliveryLeadTime: nullableStringSchema().default(''),
+  deliveryDays: nullableStringSchema().default(''),
+  paymentTerms: nullableStringSchema().default(''),
+  notes: nullableStringSchema().default(''),
   extraFields: extraFieldSchema.default({}),
 })
 
 const productSchema = z.object({
-  id: z.preprocess((value) => (value === null ? undefined : value), z.string().optional()),
-  supplierId: z.string(),
-  name: z.string().min(1),
-  variety: z.string().default(''),
-  size: z.string().default(''),
-  format: z.string().default(''),
+  id: optionalIdSchema,
+  supplierId: requiredStringSchema(),
+  name: requiredStringSchema(),
+  variety: nullableStringSchema().default(''),
+  size: nullableStringSchema().default(''),
+  format: nullableStringSchema().default(''),
   unitPrice: z.coerce.number().int().nonnegative(),
-  deliveryOverride: z.string().default(''),
+  deliveryOverride: nullableStringSchema().default(''),
   minimumOrder: z.coerce.number().int().nonnegative(),
-  note: z.string().default(''),
+  note: nullableStringSchema().default(''),
   extraFields: extraFieldSchema.default({}),
 })
 
 const orderItemSchema = z.object({
-  productId: z.string(),
-  name: z.string(),
-  variety: z.string().default(''),
-  size: z.string().default(''),
-  format: z.string().default(''),
+  productId: requiredStringSchema(),
+  name: requiredStringSchema(),
+  variety: nullableStringSchema().default(''),
+  size: nullableStringSchema().default(''),
+  format: nullableStringSchema().default(''),
   unitPrice: z.coerce.number().int().nonnegative(),
   quantity: z.coerce.number().int().positive(),
 })
 
 const orderSchema = z.object({
-  supplierId: z.string(),
-  createdById: z.string(),
-  status: z.string().default('Pendiente'),
-  notes: z.string().default(''),
+  supplierId: requiredStringSchema(),
+  createdById: requiredStringSchema(),
+  status: z.enum(orderStatuses).default('Pendiente'),
+  notes: nullableStringSchema().default(''),
   extraFields: extraFieldSchema.default({}),
   items: z.array(orderItemSchema).min(1),
   total: z.coerce.number().int().nonnegative(),
@@ -88,10 +122,10 @@ const orderSchema = z.object({
 
 const customFieldSchema = z.object({
   entity: z.enum(['supplier', 'product', 'order', 'user']),
-  label: z.string().min(1),
-  key: z.string().min(1),
+  label: requiredStringSchema(),
+  key: requiredStringSchema(),
   fieldType: z.enum(['text', 'number', 'textarea']),
-  placeholder: z.string().default(''),
+  placeholder: nullableStringSchema().default(''),
 })
 
 const backupSchema = z.object({
@@ -181,7 +215,7 @@ app.post('/api/orders', (request, response) => {
 })
 
 app.patch('/api/orders/:id/status', (request, response) => {
-  const payload = parseOrThrow(z.object({ status: z.string().min(1) }), request.body)
+  const payload = parseOrThrow(z.object({ status: z.enum(orderStatuses) }), request.body)
   response.json(updateOrderStatusById(request.params.id, payload.status))
 })
 
@@ -196,6 +230,18 @@ app.delete('/api/custom-fields/:entity/:key', (request, response) => {
 })
 
 app.use((error, _request, response, _next) => {
+  if (error?.code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+    return response.status(409).json({
+      message: 'No se puede eliminar o guardar el registro porque tiene datos relacionados.',
+    })
+  }
+
+  if (error?.code === 'SQLITE_CONSTRAINT_PRIMARYKEY' || error?.code === 'SQLITE_CONSTRAINT_UNIQUE') {
+    return response.status(409).json({
+      message: 'Ya existe un registro con esos datos.',
+    })
+  }
+
   response.status(error.status || 500).json({
     message: error.message || 'Unexpected server error',
   })
